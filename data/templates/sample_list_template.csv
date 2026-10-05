@@ -1,0 +1,4 @@
+sample_id,source_plate,source_well,condition
+S001,CULT01,A1,DMSO
+S002,CULT01,B1,DMSO
+S003,CULT01,C1,compound_A_1uM

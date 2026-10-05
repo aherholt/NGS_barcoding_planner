@@ -1,0 +1,6 @@
+<form method="post" enctype="multipart/form-data" action="{% url 'experiment_action' exp.pk 'libprep_done' %}">{% csrf_token %}
+  {% if exp.is_tag_and_pool %}<div class="field">{{ libprep_form.manifest.label_tag }} {{ libprep_form.manifest }}
+    <div class="help">{{ libprep_form.manifest.help_text }}</div></div>{% endif %}
+  <div class="field">{{ libprep_form.comment.label_tag }} {{ libprep_form.comment }}</div>
+  <button {% if not n_samples %}disabled{% endif %}>Record library prep as done</button>
+</form>

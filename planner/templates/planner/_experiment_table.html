@@ -1,0 +1,17 @@
+<table>
+  <tr><th>Code</th><th>Title</th><th>Type</th><th>Read structure</th><th class="num">M read pairs</th>
+      <th>Lysis</th><th>Deadline</th><th>Library prep</th><th>Status</th></tr>
+  {% for e in experiments %}
+  <tr>
+    <td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td>
+    <td>{{ e.title }}</td>
+    <td>{{ e.get_library_type_display }}</td>
+    <td class="mono">{{ e.read_structure }}</td>
+    <td class="num">{{ e.requested_m_read_pairs|default_if_none:"–" }}</td>
+    <td>{{ e.lysis_date|date:"Y-m-d"|default:"–" }}</td>
+    <td>{{ e.delivery_deadline|date:"Y-m-d"|default:"–" }}</td>
+    <td>{{ e.responsible_libprep|default:"–" }}</td>
+    <td>{% include "planner/_status.html" with status=e.status label=e.get_status_display kind="experiment" %}</td>
+  </tr>
+  {% empty %}<tr><td colspan="9" class="muted">No experiments.</td></tr>{% endfor %}
+</table>

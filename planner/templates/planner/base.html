@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}NGS barcoding planner{% endblock %}</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2430; --muted:#667085; --line:#e2e5ea; --accent:#2457c5;
+          --ok:#1e7f4f; --warn:#a15c00; --err:#b42318; --okbg:#e8f6ee; --warnbg:#fff4e0; --errbg:#fdecea; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:#16213a; color:#fff; padding:0 24px; display:flex; align-items:center; gap:24px; height:52px; }
+  header a { color:#cfd8ea; text-decoration:none; } header a:hover, header a.brand { color:#fff; }
+  header .brand { font-weight:650; } header .spacer { flex:1; }
+  main { max-width:1280px; margin:0 auto; padding:20px 24px 60px; }
+  h1 { font-size:22px; margin:4px 0 4px; } h2 { font-size:16px; margin:0 0 10px; }
+  .sub { color:var(--muted); margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; }
+  table { width:100%; border-collapse:collapse; } th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size:12.5px; }
+  a { color:var(--accent); }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; background:#eef1f6; color:#344054; white-space:nowrap; }
+  .badge.ok { background:var(--okbg); color:var(--ok); } .badge.warn { background:var(--warnbg); color:var(--warn); }
+  .badge.err { background:var(--errbg); color:var(--err); }
+  .msg { padding:8px 12px; border-radius:6px; margin-bottom:8px; } .msg.error { background:var(--errbg); color:var(--err); }
+  .msg.success { background:var(--okbg); color:var(--ok); } .msg.warning { background:var(--warnbg); color:var(--warn); }
+  .issue { padding:6px 10px; border-left:4px solid; margin:4px 0; border-radius:3px; }
+  .issue.error { border-color:var(--err); background:var(--errbg); } .issue.warning { border-color:var(--warn); background:var(--warnbg); }
+  .issue.info { border-color:#98a2b3; background:#f2f4f7; }
+  button, .btn { font:inherit; padding:6px 12px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; text-decoration:none; display:inline-block; }
+  button.secondary, .btn.secondary { background:#fff; color:var(--accent); } button.danger { background:var(--err); border-color:var(--err); }
+  form.inline { display:inline; } .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start; }
+  input, select, textarea { font:inherit; padding:5px 8px; border:1px solid #c8cdd5; border-radius:5px; max-width:100%; }
+  .field { margin-bottom:10px; } .field label { display:block; font-weight:600; margin-bottom:2px; }
+  .help { color:var(--muted); font-size:12px; } .errorlist { color:var(--err); margin:2px 0; padding-left:18px; }
+  details > summary { cursor:pointer; color:var(--accent); margin:6px 0; }
+  .pool { border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-bottom:10px; }
+  .pool h3 { font-size:14px; margin:0 0 6px; display:flex; gap:10px; align-items:center; }
+  .bar { position:relative; height:22px; background:#eef1f6; border-radius:4px; overflow:hidden; }
+  .bar > span { position:absolute; left:0; top:0; bottom:0; background:#5b8def; }
+  .bar.over > span { background:var(--err); } .bar.sel { outline:2px solid var(--ink); }
+  .bar > em { position:absolute; left:8px; top:2px; font-style:normal; font-size:12px; color:#0b1220; }
+  .muted { color:var(--muted); }
+  .two { display:grid; grid-template-columns: 2fr 1fr; gap:16px; } @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <a class="brand" href="{% url 'dashboard' %}">NGS barcoding planner</a>
+  {% if user.is_authenticated %}
+  <a href="{% url 'experiment_list' %}">Experiments</a>
+  <a href="{% url 'run_list' %}">Sequencing runs</a>
+  {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+  <span class="spacer"></span>
+  <span>{{ user.get_full_name|default:user.username }}</span>
+  <form class="inline" method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="secondary" style="padding:3px 10px">Log out</button></form>
+  {% endif %}
+</header>
+<main>
+  {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

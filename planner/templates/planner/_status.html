@@ -1,0 +1,1 @@
+{% load planner_extras %}{% with k=kind|default:"" %}<span class="badge {{ status|status_class:k }}">{{ label }}</span>{% endwith %}

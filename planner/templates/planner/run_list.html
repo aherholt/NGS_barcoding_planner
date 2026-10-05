@@ -1,0 +1,6 @@
+{% extends "planner/base.html" %}
+{% block content %}
+<div class="actions" style="justify-content:space-between"><h1>Sequencing runs</h1>
+  <a class="btn secondary" href="{% url 'run_new' %}">+ New run</a></div>
+<div class="card">{% include "planner/_run_table.html" with runs=runs %}</div>
+{% endblock %}

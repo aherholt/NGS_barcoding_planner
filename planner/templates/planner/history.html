@@ -1,0 +1,12 @@
+{% extends "planner/base.html" %}
+{% block content %}
+<h1>Audit trail · <a href="{{ exp.get_absolute_url }}">{{ exp.code }}</a></h1>
+<p class="sub">Every version of the experiment, its samples and pools (who, when, what changed). Sign-offs and deviations are shown on the experiment page.</p>
+<div class="card">
+<table><tr><th>When</th><th>Who</th><th>Object</th><th>Action</th><th>Changes</th></tr>
+{% for r in records %}
+  <tr><td>{{ r.when|date:"Y-m-d H:i:s" }}</td><td>{{ r.who|default:"system" }}</td><td>{{ r.what }} {{ r.obj }}</td>
+      <td>{{ r.type }}</td><td class="mono">{{ r.changes }}</td></tr>
+{% empty %}<tr><td colspan="5" class="muted">No history.</td></tr>{% endfor %}
+</table></div>
+{% endblock %}

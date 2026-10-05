@@ -1,0 +1,48 @@
+# Production-like setup on the lab server: app + PostgreSQL database + SharePoint sync every 5 min.
+# Start:   docker compose up -d --build
+# Logs:    docker compose logs -f app
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: planner
+      POSTGRES_USER: planner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U planner"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: planner
+      POSTGRES_USER: planner
+      POSTGRES_HOST: db
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  sharepoint-sync:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: planner
+      POSTGRES_USER: planner
+      POSTGRES_HOST: db
+    depends_on:
+      app:
+        condition: service_started
+    # runs the sync every 5 minutes; does nothing useful until GRAPH_* / SHAREPOINT_* are set
+    command: ["sh", "-c", "while true; do python manage.py sync_sharepoint || true; sleep 300; done"]
+
+volumes:
+  pgdata:

@@ -1,0 +1,29 @@
+{% extends "planner/base.html" %}
+{% block content %}
+<h1>Overview</h1>
+<p class="sub">Open experiments and sequencing runs. Everything you do here is recorded in the audit trail.</p>
+
+{% if pending %}
+<div class="card">
+  <h2>Waiting for your approval (4-eyes)</h2>
+  <table><tr><th>Step</th><th>Object</th><th>Submitted by</th><th>When</th></tr>
+  {% for s in pending %}
+    <tr><td>{{ s.get_step_display }}</td>
+      <td>{% if s.experiment %}<a href="{{ s.experiment.get_absolute_url }}">{{ s.experiment.code }}</a>{% else %}<a href="{{ s.run.get_absolute_url }}">{{ s.run.run_id }}</a>{% endif %}</td>
+      <td>{{ s.submitted_by }}</td><td>{{ s.submitted_at|date:"Y-m-d H:i" }}</td></tr>
+  {% endfor %}</table>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="actions" style="justify-content:space-between"><h2>Open experiments</h2>
+    <a class="btn secondary" href="{% url 'experiment_new' %}">+ New experiment</a></div>
+  {% include "planner/_experiment_table.html" with experiments=experiments %}
+</div>
+
+<div class="card">
+  <div class="actions" style="justify-content:space-between"><h2>Open sequencing runs</h2>
+    <a class="btn secondary" href="{% url 'run_new' %}">+ New run</a></div>
+  {% include "planner/_run_table.html" with runs=runs %}
+</div>
+{% endblock %}

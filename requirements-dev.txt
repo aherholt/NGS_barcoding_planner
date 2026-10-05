@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==9.1.1
+pytest-django==4.14.0
+# only for the robot-compatibility test (needs the simulation repo next to this one)
+pandas==3.0.5

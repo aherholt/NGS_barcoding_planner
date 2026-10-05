@@ -1,0 +1,6 @@
+{% extends "planner/base.html" %}
+{% block content %}
+<div class="actions" style="justify-content:space-between"><h1>All experiments</h1>
+  <a class="btn secondary" href="{% url 'experiment_new' %}">+ New experiment</a></div>
+<div class="card">{% include "planner/_experiment_table.html" with experiments=experiments %}</div>
+{% endblock %}

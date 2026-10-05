@@ -1,0 +1,39 @@
+{
+  "_comment": "Maps app fields to SharePoint INTERNAL column names. Display names (what you see in the list) differ from internal names, e.g. 'Responsible Person_Assay' may be 'Responsible_x0020_Person_x005f_A'. Run `python manage.py sharepoint_columns` to print the real internal names, then fix the values below. Remove a line to skip that field.",
+  "fields": {
+    "title": "Title",
+    "responsible_assay": "Responsible_x0020_Person_x005f_Assay",
+    "responsible_libprep": "Responsible_x0020_Person_x005f_Library_x0020_prep",
+    "responsible_ngs": "Responsible_x0020_Person_x005f_NGS_x0020_orga",
+    "eln_assay_url": "ELN_x0020_link_x005f_Assay_x0020_folder",
+    "eln_libprep_url": "ELN_x0020_link_x005f_NGS_x0020_library_x0020_prep",
+    "lysis_date": "Expected_x0020_date_x0020_of_x0020_cell_x0020_lysis",
+    "delivery_deadline": "Data_x0020_delivery_x0020_deadline",
+    "library_type": "Library_x0020_type",
+    "description": "Short_x0020_assay_x0020_description",
+    "requested_m_read_pairs": "Requested_x0020_Data_x0020_Output",
+    "avg_product_length": "Avrg_x002e__x0020_product_x0020_length",
+    "avg_insert_length": "Avrg_x002e__x0020_insert_x0020_length",
+    "library_complexity": "Library_x0020_complexity",
+    "r1_length": "R1_x0020_length",
+    "r2_length": "R2_x0020_length",
+    "i7_length": "i7_x0020_length",
+    "i5_length": "i5_x0020_length"
+  },
+  "write_back": {
+    "status": "Status",
+    "run_id": "NGS_x0020_run_x0020_ID",
+    "submission_date": "Date_x0020_of_x0020_NGS_x0020_sample_x0020_submission"
+  },
+  "library_type_choices": {
+    "Tag&Pool": "tag_and_pool",
+    "Bulk RNA-seq": "bulk_rnaseq",
+    "snRNA-seq": "sn_rnaseq",
+    "CRISPR screen": "crispr_screen"
+  },
+  "complexity_choices": {
+    "low": "low",
+    "normal": "normal",
+    "high": "normal"
+  }
+}

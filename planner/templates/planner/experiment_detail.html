@@ -1,0 +1,150 @@
+{% extends "planner/base.html" %}
+{% block title %}{{ exp.code }} – NGS barcoding planner{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content:space-between;align-items:center">
+  <div><h1>{{ exp.code }} · {{ exp.title }}</h1>
+    <div class="sub">{{ exp.get_library_type_display }} · {% include "planner/_status.html" with status=exp.status label=exp.get_status_display kind="experiment" %}
+      {% if exp.sharepoint_item_id %}· SharePoint item #{{ exp.sharepoint_item_id }}{% endif %}</div></div>
+  <div class="actions"><a class="btn secondary" href="{% url 'experiment_edit' exp.pk %}">Edit details</a>
+    <a class="btn secondary" href="{% url 'experiment_history' exp.pk %}">Audit trail</a></div>
+</div>
+
+<div class="two">
+<div>
+  <!-- ===== Workflow: the next step depends on the status ===== -->
+  <div class="card">
+    <h2>Next step</h2>
+    {% if exp.status == "submitted" %}
+      <p>New request from the intake list. Check the details (read structure, reads, dates), then accept it.</p>
+      <form method="post" action="{% url 'experiment_action' exp.pk 'accept' %}">{% csrf_token %}{{ comment_form.comment }}
+        <p><button>Accept experiment</button></p></form>
+    {% elif exp.status == "accepted" and exp.is_tag_and_pool %}
+      <p>1) Upload the sample list. 2) Create the barcode plan. 3) Submit it — a <b>second person</b> approves it before the robot file can be downloaded.</p>
+      {% if problems %}<p class="muted">Before submitting, fix:</p>{% for p in problems %}<div class="issue error">{{ p }}</div>{% endfor %}{% endif %}
+      <form method="post" action="{% url 'experiment_action' exp.pk 'submit_plan' %}">{% csrf_token %}{{ comment_form.comment }}
+        <p><button {% if problems or not n_samples %}disabled{% endif %}>Submit barcode plan for review</button></p></form>
+    {% elif exp.status == "accepted" %}
+      <p>Upload the sample list (each sample becomes one indexed library). When the libraries are made, record it here.</p>
+      {% include "planner/_libprep_form.html" %}
+    {% elif exp.status == "plan_in_review" and pending_signoff %}
+      <p>Submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.
+        {% if pending_signoff.comment %}<br>Comment: {{ pending_signoff.comment }}{% endif %}</p>
+      {% if pending_signoff.submitted_by_id == user.pk %}
+        <p class="muted">Waiting for a second person to approve (4-eyes principle).</p>
+      {% else %}
+        <form method="post" action="{% url 'experiment_action' exp.pk 'approve_plan' %}">{% csrf_token %}
+          <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
+          <p class="actions"><button>Approve plan</button>
+          <button class="danger" formaction="{% url 'experiment_action' exp.pk 'reject_plan' %}">Reject</button></p></form>
+      {% endif %}
+    {% elif exp.status == "plan_approved" %}
+      <p>Plan approved. Download the robot file, run the STAR protocol, then record the library prep
+        (upload the run's <code>pool_manifest.csv</code> to compare it with the plan).</p>
+      {% include "planner/_libprep_form.html" %}
+    {% elif exp.status == "libprep_done" %}
+      <p>Library prep done — the experiment can now be added to a <a href="{% url 'run_list' %}">sequencing run</a>.</p>
+    {% else %}
+      <p>{{ exp.get_status_display }}. {% if runs %}See run(s): {% for r in runs %}<a href="{{ r.get_absolute_url }}">{{ r.run_id }}</a> {% endfor %}{% endif %}</p>
+    {% endif %}
+    {% if exp.status == "plan_in_review" or exp.status == "plan_approved" %}
+      <details><summary>Reopen the plan (needs a reason)</summary>
+        <form method="post" action="{% url 'experiment_action' exp.pk 'reopen_plan' %}">{% csrf_token %}{{ reason_form.reason }}
+          <p><button class="secondary">Reopen</button></p></form></details>
+    {% endif %}
+  </div>
+
+  <!-- ===== Samples and pools ===== -->
+  <div class="card">
+    <h2>{% if exp.is_tag_and_pool %}Barcode plan{% else %}Libraries{% endif %}
+      <span class="muted" style="font-weight:400">· {{ n_samples }} samples · {{ pools|length }} {% if exp.is_tag_and_pool %}pools{% else %}libraries{% endif %}
+      {% if exp.planning_seed %}· seed {{ exp.planning_seed }}{% endif %}</span></h2>
+
+    {% if not exp.plan_locked and exp.status != "cancelled" %}
+    <div class="grid" style="margin-bottom:12px">
+      <form method="post" enctype="multipart/form-data" action="{% url 'experiment_upload' exp.pk %}">{% csrf_token %}
+        <b>Upload sample list</b><br>{{ upload_form.file }}<div class="help">{{ upload_form.file.help_text }}</div>
+        <p><button class="secondary">Upload (replaces current list)</button></p></form>
+      {% if exp.is_tag_and_pool %}
+      <form method="post" action="{% url 'experiment_plan' exp.pk %}">{% csrf_token %}
+        <b>Create barcode plan automatically</b>
+        {% for f in plan_form %}<div class="field" style="margin:4px 0">{{ f.label_tag }} {{ f }} <span class="help">{{ f.help_text }}</span></div>{% endfor %}
+        <p><button class="secondary" {% if not exp.well_barcode_set %}disabled title="select a well-barcode set in Edit details"{% endif %}>Plan pools &amp; barcodes</button></p></form>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% for pool, samples in pools.items %}
+      <div class="pool">
+        <h3>{{ pool.pool_id }} <span class="badge">{{ samples|length }} samples</span>
+          {% if pool.i7 %}<span class="badge mono">{{ pool.i7.primer_id }} + {{ pool.i5.primer_id|default:"–" }}</span>{% endif %}</h3>
+        {% if samples %}
+        <table><tr><th>Sample</th><th>Culture plate</th><th>Well</th><th>Condition</th>{% if exp.is_tag_and_pool %}<th>Well barcode</th><th>Sequence</th>{% endif %}</tr>
+          {% for s in samples %}<tr><td>{{ s.sample_id }}</td><td>{{ s.source_plate }}</td><td>{{ s.source_well }}</td><td>{{ s.condition }}</td>
+            {% if exp.is_tag_and_pool %}<td>{{ s.well_barcode.barcode_id|default:"–" }}</td><td class="mono">{{ s.well_barcode.sequence|default:"" }}</td>{% endif %}</tr>{% endfor %}
+        </table>{% endif %}
+      </div>
+    {% endfor %}
+    {% if unassigned %}
+      <div class="pool"><h3>Not assigned yet <span class="badge warn">{{ unassigned|length }}</span></h3>
+        <table><tr><th>Sample</th><th>Culture plate</th><th>Well</th><th>Condition</th></tr>
+        {% for s in unassigned %}<tr><td>{{ s.sample_id }}</td><td>{{ s.source_plate }}</td><td>{{ s.source_well }}</td><td>{{ s.condition }}</td></tr>{% endfor %}</table></div>
+    {% endif %}
+    {% if not n_samples %}<p class="muted">No samples uploaded yet.</p>{% endif %}
+  </div>
+</div>
+
+<div>
+  <div class="card">
+    <h2>Details</h2>
+    <table>
+      <tr><th>Read structure</th><td class="mono">R1 {{ exp.r1_length|default:"?" }} · i7 {{ exp.i7_length|default:"?" }} · i5 {{ exp.i5_length|default:"?" }} · R2 {{ exp.r2_length|default:"?" }}</td></tr>
+      <tr><th>Requested output</th><td>{{ exp.requested_m_read_pairs|default_if_none:"?" }} M read pairs (total)</td></tr>
+      <tr><th>Complexity</th><td>{{ exp.get_library_complexity_display }}</td></tr>
+      <tr><th>Lysis / deadline</th><td>{{ exp.lysis_date|date:"Y-m-d"|default:"–" }} / {{ exp.delivery_deadline|date:"Y-m-d"|default:"–" }}</td></tr>
+      <tr><th>Well-barcode set</th><td>{{ exp.well_barcode_set|default:"–" }}</td></tr>
+      <tr><th>Assay</th><td>{{ exp.responsible_assay|default:"–" }}</td></tr>
+      <tr><th>Library prep</th><td>{{ exp.responsible_libprep|default:"–" }}</td></tr>
+      <tr><th>NGS orga</th><td>{{ exp.responsible_ngs|default:"–" }}</td></tr>
+      <tr><th>ELN</th><td>{% if exp.eln_assay_url %}<a href="{{ exp.eln_assay_url }}" target="_blank">assay</a>{% endif %}
+        {% if exp.eln_libprep_url %} · <a href="{{ exp.eln_libprep_url }}" target="_blank">library prep</a>{% endif %}</td></tr>
+    </table>
+    {% if exp.description %}<p>{{ exp.description|linebreaksbr }}</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Downloads</h2>
+    {% if exp.is_tag_and_pool %}
+      {% if exp.plan_locked and exp.status != "plan_in_review" %}
+        <p><a href="{% url 'experiment_download' exp.pk 'star' %}">STAR robot sample sheet (.csv)</a></p>
+      {% elif n_samples %}<p><a href="{% url 'experiment_download' exp.pk 'star' %}?draft=1">Draft STAR sample sheet (not approved)</a></p>{% endif %}
+      {% if exp.well_barcode_set %}<p><a href="{% url 'experiment_download' exp.pk 'barcode_plate' %}">Barcode stock plate (.csv)</a></p>{% endif %}
+    {% endif %}
+    <p><a href="{% url 'experiment_download' exp.pk 'barcode_map' %}">Barcode map for bioinformatics (.csv)</a></p>
+  </div>
+
+  <div class="card">
+    <h2>Sign-offs</h2>
+    {% for s in signoffs %}
+      <div style="margin-bottom:6px">{% include "planner/_status.html" with status=s.state label=s.get_state_display %} <b>{{ s.get_step_display }}</b><br>
+        <span class="muted">by {{ s.submitted_by }} {{ s.submitted_at|date:"Y-m-d H:i" }}{% if s.decided_by and s.decided_by_id != s.submitted_by_id %} · decided by {{ s.decided_by }} {{ s.decided_at|date:"Y-m-d H:i" }}{% endif %}</span>
+        {% if s.comment %}<br>{{ s.comment|linebreaksbr }}{% endif %}</div>
+    {% empty %}<p class="muted">None yet.</p>{% endfor %}
+  </div>
+
+  <div class="card">
+    <h2>Deviations</h2>
+    {% for d in deviations %}<div style="margin-bottom:6px"><span class="muted">{{ d.created_at|date:"Y-m-d H:i" }} · {{ d.created_by }}</span><br>{{ d.description|linebreaksbr }}</div>
+    {% empty %}<p class="muted">None.</p>{% endfor %}
+    <details><summary>Record a deviation</summary>
+      <form method="post" action="{% url 'experiment_action' exp.pk 'deviation' %}">{% csrf_token %}{{ deviation_form.description }}
+        <p><button class="secondary">Save</button></p></form></details>
+    <details><summary>Put on hold / cancel / resume</summary>
+      <form method="post">{% csrf_token %}{{ reason_form.reason }}
+        <p class="actions">
+          <button class="secondary" formaction="{% url 'experiment_action' exp.pk 'hold' %}">On hold</button>
+          <button class="secondary" formaction="{% url 'experiment_action' exp.pk 'resume' %}">Back to submitted</button>
+          <button class="danger" formaction="{% url 'experiment_action' exp.pk 'cancel' %}">Cancel experiment</button></p></form></details>
+  </div>
+</div>
+</div>
+{% endblock %}

@@ -1,0 +1,125 @@
+{% extends "planner/base.html" %}
+{% block title %}{{ run.run_id }} – NGS barcoding planner{% endblock %}
+{% block content %}
+<div class="actions" style="justify-content:space-between;align-items:center">
+  <div><h1>Run {{ run.run_id }}</h1>
+    <div class="sub">{{ run.provider|default:"provider not set" }} · {{ run.flowcell_type|default:"no flow cell selected" }} ·
+      <span class="mono">{{ run.read_structure }}</span> ·
+      {% include "planner/_status.html" with status=run.status label=run.get_status_display %}</div></div>
+  {% if not run.locked %}<a class="btn secondary" href="{% url 'run_edit' run.pk %}">Edit run settings</a>{% endif %}
+</div>
+
+<div class="two">
+<div>
+  <div class="card">
+    <h2>Next step</h2>
+    {% if run.status == "planning" %}
+      <div class="grid">
+        <form method="post" action="{% url 'run_action' run.pk 'add_experiment' %}">{% csrf_token %}
+          <b>1. Add an experiment</b><br>{{ add_form.experiment }}
+          <div class="help">All its pools are added; the requested reads are split by samples per pool.</div>
+          <p><button class="secondary">Add</button></p></form>
+        <form method="post" action="{% url 'run_action' run.pk 'assign_indexes' %}">{% csrf_token %}
+          <b>2. Assign sample indexes</b><br>{{ index_form.index_set }}<br>
+          <label>{{ index_form.overwrite }} {{ index_form.overwrite.help_text }}</label>
+          <div class="help">Picks unused i7/i5 pairs, preferring unique i7 and i5 and large distances.</div>
+          <p><button class="secondary">Assign</button></p></form>
+      </div>
+      <form method="post" action="{% url 'run_action' run.pk 'submit' %}">{% csrf_token %}
+        <b>3. Submit for review</b> (a second person approves)<div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
+        <p><button {% if errors or not run_pools %}disabled title="fix the errors in the checks first"{% endif %}>Submit run plan</button></p></form>
+    {% elif run.status == "in_review" and pending_signoff %}
+      <p>Submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.</p>
+      {% if pending_signoff.submitted_by_id == user.pk %}<p class="muted">Waiting for a second person (4-eyes principle).</p>
+      {% else %}
+      <form method="post" action="{% url 'run_action' run.pk 'approve' %}">{% csrf_token %}
+        <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
+        <p class="actions"><button>Approve run plan</button>
+          <button class="danger" formaction="{% url 'run_action' run.pk 'reject' %}">Reject</button></p></form>
+      {% endif %}
+    {% elif run.status == "approved" %}
+      <p>Approved. Download the sample sheet for the provider, send the libraries, then mark the run as submitted.</p>
+      <form method="post" action="{% url 'run_action' run.pk 'submitted' %}">{% csrf_token %}<button>Mark as submitted to provider</button></form>
+    {% elif run.status == "submitted" %}
+      <form method="post" action="{% url 'run_action' run.pk 'delivered' %}">{% csrf_token %}{{ comment_form.comment }}
+        <p><button>Mark data as delivered</button></p></form>
+    {% else %}<p>{{ run.get_status_display }}.</p>{% endif %}
+    {% if run.status == "in_review" or run.status == "approved" %}
+      <details><summary>Reopen the run plan (needs a reason)</summary>
+        <form method="post" action="{% url 'run_action' run.pk 'reopen' %}">{% csrf_token %}{{ reason_form.reason }}
+          <p><button class="secondary">Reopen</button></p></form></details>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Libraries in this run <span class="muted" style="font-weight:400">· {{ run_pools|length }} · {{ total_target|floatformat:1 }} M read pairs requested</span></h2>
+    <form method="post" action="{% url 'run_action' run.pk 'targets' %}">{% csrf_token %}
+    <table>
+      <tr><th>Experiment</th><th>Library / pool</th><th class="num">Samples</th><th>i7</th><th>i5</th><th class="num">Target (M pairs)</th></tr>
+      {% for rp in run_pools %}
+      <tr><td><a href="{{ rp.pool.experiment.get_absolute_url }}">{{ rp.pool.experiment.code }}</a></td>
+        <td>{{ rp.pool.pool_id }}</td><td class="num">{{ rp.pool.samples.count }}</td>
+        <td class="mono">{% if rp.pool.i7 %}{{ rp.pool.i7.primer_id }} {{ rp.pool.i7.sequence }}{% else %}<span class="badge err">none</span>{% endif %}</td>
+        <td class="mono">{% if rp.pool.i5 %}{{ rp.pool.i5.primer_id }} {{ rp.pool.i5.sequence }}{% else %}–{% endif %}</td>
+        <td class="num">{% if run.locked %}{{ rp.target_m_read_pairs }}{% else %}<input name="target_{{ rp.pk }}" value="{{ rp.target_m_read_pairs }}" size="7" style="text-align:right">{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="6" class="muted">Add an experiment to start.</td></tr>{% endfor %}
+    </table>
+    {% if run_pools and not run.locked %}<p><button class="secondary">Save read targets</button></p>{% endif %}
+    </form>
+    {% if experiments and not run.locked %}
+      <details><summary>Remove an experiment</summary>
+        <form method="post" action="{% url 'run_action' run.pk 'remove_experiment' %}">{% csrf_token %}
+          <select name="experiment">{% for e in experiments %}<option value="{{ e.pk }}">{{ e.code }}</option>{% endfor %}</select>
+          <button class="secondary">Remove</button></form></details>
+    {% endif %}
+    <p class="help">Indexes can be corrected by hand in Admin → Pools while the run is in planning.</p>
+  </div>
+</div>
+
+<div>
+  <div class="card">
+    <h2>Checks</h2>
+    {% for i in issues %}<div class="issue {{ i.level }}"><b>{{ i.level|upper }}</b> · {{ i.message }}</div>{% endfor %}
+  </div>
+
+  <div class="card">
+    <h2>Flow cell options</h2>
+    {% for f in flowcells %}
+      <div style="margin-bottom:10px">
+        <div class="actions" style="justify-content:space-between"><b>{{ f.name }}</b>
+          <span class="muted">{{ f.needed_m|floatformat:0 }} / {{ f.output_m|floatformat:0 }} M</span></div>
+        <div class="bar {% if not f.fits %}over{% endif %} {% if f.selected %}sel{% endif %}">
+          <span style="width:{{ f.fill_pct|floatformat:1 }}%"></span><em>{{ f.fill_pct|floatformat:0 }}% full{% if not f.fits %} (needs more than this flow cell){% endif %}</em></div>
+        <div class="help">{% if f.fits %}Room for ~{{ f.free_requestable_m|floatformat:0 }} M more read pairs
+          {% if f.more_experiments is not None %}(≈ {{ f.more_experiments }} typical experiments of {{ f.typical_m|floatformat:0 }} M){% endif %}
+          {% else %}Does not fit.{% endif %}</div>
+      </div>
+    {% empty %}<p class="muted">No flow cell types defined (Admin → Flowcell types).</p>{% endfor %}
+    {% if flowcells %}<p class="help">Includes {{ flowcells.0.phix|floatformat:0 }}% PhiX and the safety margin. Outputs are what you entered for your provider.</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Downloads</h2>
+    {% if run.status != "approved" and run.status != "submitted" and run.status != "data_delivered" %}<p class="help">Draft files (not approved) are prefixed DRAFT_.</p>{% endif %}
+    <p><a href="{% url 'run_download' run.pk 'samplesheet' %}">Illumina sample sheet v2 (BCL Convert)</a></p>
+    <p><a href="{% url 'run_download' run.pk 'provider' %}">Library list for provider (.csv)</a></p>
+    <p><a href="{% url 'run_download' run.pk 'barcode_map' %}">Barcode map, all samples (.csv)</a></p>
+    <p><a href="{% url 'run_download' run.pk 'json' %}">Run summary for bioinformatics (.json)</a></p>
+  </div>
+
+  <div class="card">
+    <h2>Sign-offs</h2>
+    {% for s in signoffs %}<div style="margin-bottom:6px">{% include "planner/_status.html" with status=s.state label=s.get_state_display %} <b>{{ s.get_step_display }}</b><br>
+      <span class="muted">by {{ s.submitted_by }} {{ s.submitted_at|date:"Y-m-d H:i" }}{% if s.decided_by and s.decided_by_id != s.submitted_by_id %} · decided by {{ s.decided_by }}{% endif %}</span>
+      {% if s.comment %}<br>{{ s.comment|linebreaksbr }}{% endif %}</div>
+    {% empty %}<p class="muted">None yet.</p>{% endfor %}
+    <h2 style="margin-top:12px">Deviations</h2>
+    {% for d in deviations %}<div><span class="muted">{{ d.created_at|date:"Y-m-d H:i" }} · {{ d.created_by }}</span><br>{{ d.description|linebreaksbr }}</div>
+    {% empty %}<p class="muted">None.</p>{% endfor %}
+    <details><summary>Record a deviation</summary>
+      <form method="post" action="{% url 'run_action' run.pk 'deviation' %}">{% csrf_token %}{{ deviation_form.description }}
+        <p><button class="secondary">Save</button></p></form></details>
+  </div>
+</div>
+</div>
+{% endblock %}

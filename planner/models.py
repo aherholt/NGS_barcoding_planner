@@ -142,21 +142,23 @@ class Experiment(models.Model):
         LOW = "low", "Low (amplicon, sgRNA, barcode)"
 
     class Status(models.TextChoices):
+        # Order of the workflow: everything is planned and approved BEFORE the lab work starts.
         SUBMITTED = "submitted", "Submitted"
-        ACCEPTED = "accepted", "Accepted"
-        PLAN_IN_REVIEW = "plan_in_review", "Barcode plan in review"
-        PLAN_APPROVED = "plan_approved", "Barcode plan approved"
+        ACCEPTED = "accepted", "Accepted – in planning"
+        IN_RUN = "in_run", "Assigned to NGS run"
+        PLAN_IN_REVIEW = "plan_in_review", "Final plan in review"
+        PLAN_APPROVED = "plan_approved", "Plan approved – ready for library prep"
         LIBPREP_DONE = "libprep_done", "Library prep done"
-        RUN_PLANNED = "run_planned", "Run planned"
         SUBMITTED_TO_PROVIDER = "submitted_to_provider", "Submitted to provider"
         DATA_DELIVERED = "data_delivered", "Data delivered"
         ON_HOLD = "on_hold", "On hold"
         CANCELLED = "cancelled", "Cancelled"
 
-    # statuses in which the barcode plan (samples → pools → well barcodes) may no longer change
+    # Samples, pools and well barcodes can only be changed while the experiment is NOT in a run.
+    # To change a plan that is in a run: remove the experiment from the run (only while the run is in planning).
     PLAN_LOCKED_STATUSES = {
-        Status.PLAN_IN_REVIEW, Status.PLAN_APPROVED, Status.LIBPREP_DONE, Status.RUN_PLANNED,
-        Status.SUBMITTED_TO_PROVIDER, Status.DATA_DELIVERED,
+        Status.IN_RUN, Status.PLAN_IN_REVIEW, Status.PLAN_APPROVED, Status.LIBPREP_DONE,
+        Status.SUBMITTED_TO_PROVIDER, Status.DATA_DELIVERED, Status.CANCELLED,
     }
 
     code = models.SlugField(max_length=30, unique=True, help_text="short ID used in pool and sample-sheet names, e.g. TP26-014")
@@ -260,8 +262,8 @@ class Sample(models.Model):
 class SequencingRun(models.Model):
     class Status(models.TextChoices):
         PLANNING = "planning", "Planning"
-        IN_REVIEW = "in_review", "Run plan in review"
-        APPROVED = "approved", "Run plan approved"
+        IN_REVIEW = "in_review", "Final plan in review"
+        APPROVED = "approved", "Approved – library prep"
         SUBMITTED = "submitted", "Submitted to provider"
         DATA_DELIVERED = "data_delivered", "Data delivered"
         CANCELLED = "cancelled", "Cancelled"
@@ -331,9 +333,9 @@ class RunPool(models.Model):
 class SignOff(models.Model):
     class Step(models.TextChoices):
         ACCEPT = "accept", "Experiment accepted"
-        BARCODE_PLAN = "barcode_plan", "Barcode plan"
+        BARCODE_PLAN = "barcode_plan", "Barcode plan (old workflow, v0.1)"
+        RUN_PLAN = "run_plan", "Final plan (well barcodes + sample indexes)"
         LIBPREP = "libprep", "Library prep executed"
-        RUN_PLAN = "run_plan", "Run plan"
         DATA_DELIVERED = "data_delivered", "Data delivered"
 
     class State(models.TextChoices):

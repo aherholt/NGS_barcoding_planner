@@ -14,52 +14,55 @@
   <!-- ===== Workflow: the next step depends on the status ===== -->
   <div class="card">
     <h2>Next step</h2>
+    {% include "planner/_workflow_steps.html" %}
     {% if exp.status == "submitted" %}
       <p>New request from the intake list. Check the details (read structure, reads, dates), then accept it.</p>
       <form method="post" action="{% url 'experiment_action' exp.pk 'accept' %}">{% csrf_token %}{{ comment_form.comment }}
         <p><button>Accept experiment</button></p></form>
-    {% elif exp.status == "accepted" and exp.is_tag_and_pool %}
-      <p>1) Upload the sample list. 2) Create the barcode plan. 3) Submit it — a <b>second person</b> approves it before the robot file can be downloaded.</p>
-      {% if problems %}<p class="muted">Before submitting, fix:</p>{% for p in problems %}<div class="issue error">{{ p }}</div>{% endfor %}{% endif %}
-      <form method="post" action="{% url 'experiment_action' exp.pk 'submit_plan' %}">{% csrf_token %}{{ comment_form.comment }}
-        <p><button {% if problems or not n_samples %}disabled{% endif %}>Submit barcode plan for review</button></p></form>
     {% elif exp.status == "accepted" %}
-      <p>Upload the sample list (each sample becomes one indexed library). When the libraries are made, record it here.</p>
-      {% include "planner/_libprep_form.html" %}
-    {% elif exp.status == "plan_in_review" and pending_signoff %}
-      <p>Submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.
-        {% if pending_signoff.comment %}<br>Comment: {{ pending_signoff.comment }}{% endif %}</p>
-      {% if pending_signoff.submitted_by_id == user.pk %}
-        <p class="muted">Waiting for a second person to approve (4-eyes principle).</p>
+      <p>{% if exp.is_tag_and_pool %}Upload the sample list and create the pool &amp; well-barcode plan below.
+        {% else %}Upload the sample list below (each sample becomes one indexed library).{% endif %}
+        When the plan is complete, add the experiment to an NGS run together with other experiments.
+        Sample indexes are distributed and the <b>final plan is approved on the run</b>, before any library prep starts.</p>
+      {% if not n_samples %}<p class="muted">No samples yet.</p>
+      {% elif problems %}<p class="muted">Not ready for a run yet:</p>{% for p in problems %}<div class="issue error">{{ p }}</div>{% endfor %}
       {% else %}
-        <form method="post" action="{% url 'experiment_action' exp.pk 'approve_plan' %}">{% csrf_token %}
-          <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
-          <p class="actions"><button>Approve plan</button>
-          <button class="danger" formaction="{% url 'experiment_action' exp.pk 'reject_plan' %}">Reject</button></p></form>
+        <div class="issue info">✓ Plan complete — ready for an NGS run.</div>
+        {% if open_runs %}
+        <form method="post" action="{% url 'experiment_action' exp.pk 'add_to_run' %}" class="actions" style="margin-top:8px">{% csrf_token %}
+          <select name="run">{% for r in open_runs %}<option value="{{ r.pk }}">{{ r.run_id }} · {{ r.read_structure }}</option>{% endfor %}</select>
+          <button>Add to run</button>
+          <a class="btn secondary" href="{% url 'run_new' %}">New run</a></form>
+        {% else %}<p><a class="btn" href="{% url 'run_new' %}">Create a new NGS run</a></p>{% endif %}
       {% endif %}
+    {% elif exp.status == "in_run" %}
+      <p>Assigned to run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>. On the run page: distribute the sample
+        indexes and submit the final plan for approval. To change samples or barcodes, remove the experiment from the run first.</p>
+    {% elif exp.status == "plan_in_review" %}
+      <p>The final plan of run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> is waiting for approval by a second person.</p>
     {% elif exp.status == "plan_approved" %}
-      <p>Plan approved. Download the robot file, run the STAR protocol, then record the library prep
-        (upload the run's <code>pool_manifest.csv</code> to compare it with the plan).</p>
+      <p>Final plan approved (run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>) — <b>library prep can start</b>.
+        {% if exp.is_tag_and_pool %}Download the STAR robot file (right), run the protocol, then the sample-index PCR with the indexes
+        shown per pool. Upload the robot's <code>pool_manifest.csv</code> when recording, to compare it with the plan.
+        {% else %}Use the sample indexes shown per library below.{% endif %}</p>
       {% include "planner/_libprep_form.html" %}
     {% elif exp.status == "libprep_done" %}
-      <p>Library prep done — the experiment can now be added to a <a href="{% url 'run_list' %}">sequencing run</a>.</p>
+      <p>Library prep done. Run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> is submitted to the provider when all its experiments are done.</p>
     {% else %}
-      <p>{{ exp.get_status_display }}. {% if runs %}See run(s): {% for r in runs %}<a href="{{ r.get_absolute_url }}">{{ r.run_id }}</a> {% endfor %}{% endif %}</p>
-    {% endif %}
-    {% if exp.status == "plan_in_review" or exp.status == "plan_approved" %}
-      <details><summary>Reopen the plan (needs a reason)</summary>
-        <form method="post" action="{% url 'experiment_action' exp.pk 'reopen_plan' %}">{% csrf_token %}{{ reason_form.reason }}
-          <p><button class="secondary">Reopen</button></p></form></details>
+      <p>{{ exp.get_status_display }}.{% if run %} Run: <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>{% endif %}</p>
     {% endif %}
   </div>
 
   <!-- ===== Samples and pools ===== -->
   <div class="card">
-    <h2>{% if exp.is_tag_and_pool %}Barcode plan{% else %}Libraries{% endif %}
+    <h2>{% if exp.is_tag_and_pool %}Pools &amp; well barcodes{% else %}Libraries{% endif %}
       <span class="muted" style="font-weight:400">· {{ n_samples }} samples · {{ pools|length }} {% if exp.is_tag_and_pool %}pools{% else %}libraries{% endif %}
       {% if exp.planning_seed %}· seed {{ exp.planning_seed }}{% endif %}</span></h2>
 
-    {% if not exp.plan_locked and exp.status != "cancelled" %}
+    {% if exp.plan_locked and exp.status != "cancelled" %}
+      <p class="help">🔒 Locked while the experiment is in run {{ run.run_id|default:"" }}. Sample indexes per pool are shown next to each pool name.</p>
+    {% endif %}
+    {% if not exp.plan_locked %}
     <div class="grid" style="margin-bottom:12px">
       <form method="post" enctype="multipart/form-data" action="{% url 'experiment_upload' exp.pk %}">{% csrf_token %}
         <b>Upload sample list</b><br>{{ upload_form.file }}<div class="help">{{ upload_form.file.help_text }}</div>
@@ -114,7 +117,7 @@
   <div class="card">
     <h2>Downloads</h2>
     {% if exp.is_tag_and_pool %}
-      {% if exp.plan_locked and exp.status != "plan_in_review" %}
+      {% if exp.status == "plan_approved" or exp.status == "libprep_done" or exp.status == "submitted_to_provider" or exp.status == "data_delivered" %}
         <p><a href="{% url 'experiment_download' exp.pk 'star' %}">STAR robot sample sheet (.csv)</a></p>
       {% elif n_samples %}<p><a href="{% url 'experiment_download' exp.pk 'star' %}?draft=1">Draft STAR sample sheet (not approved)</a></p>{% endif %}
       {% if exp.well_barcode_set %}<p><a href="{% url 'experiment_download' exp.pk 'barcode_plate' %}">Barcode stock plate (.csv)</a></p>{% endif %}

@@ -80,17 +80,17 @@ def experiment_detail(request, pk):
     unassigned = []
     for s in exp.samples.select_related("pool", "well_barcode"):
         (pools[s.pool] if s.pool in pools else unassigned).append(s)
-    problems = services.validate_plan(exp) if exp.samples.exists() else []
+    problems = services.ready_for_run(exp) if exp.status == Experiment.Status.ACCEPTED and exp.samples.exists() else []
+    runs = SequencingRun.objects.filter(run_pools__pool__experiment=exp).distinct()
     return render(request, "planner/experiment_detail.html", {
         "exp": exp, "pools": pools, "unassigned": unassigned, "problems": problems,
+        "run": runs.first(), "open_runs": SequencingRun.objects.filter(status=SequencingRun.Status.PLANNING),
         "n_samples": exp.samples.count(),
         "signoffs": exp.signoffs.select_related("submitted_by", "decided_by"),
         "deviations": exp.deviations.select_related("created_by"),
-        "runs": SequencingRun.objects.filter(run_pools__pool__experiment=exp).distinct(),
         "upload_form": UploadForm(), "plan_form": PlanForm(initial={"shuffle": True}),
         "comment_form": CommentForm(), "reason_form": ReasonForm(), "libprep_form": LibprepForm(),
         "deviation_form": DeviationForm(),
-        "pending_signoff": exp.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.BARCODE_PLAN).first(),
     })
 
 
@@ -134,16 +134,11 @@ def experiment_action(request, pk, action):
     if action == "accept":
         services.accept_experiment(exp, request.user, comment)
         messages.success(request, "Experiment accepted.")
-    elif action == "submit_plan":
-        services.submit_plan(exp, request.user, comment)
-        messages.success(request, "Barcode plan submitted for review. A second person must approve it.")
-    elif action in ("approve_plan", "reject_plan"):
-        so = get_object_or_404(SignOff, pk=request.POST.get("signoff"), experiment=exp)
-        services.decide_plan(so, request.user, action == "approve_plan", comment)
-        messages.success(request, "Plan approved." if action == "approve_plan" else "Plan rejected and unlocked.")
-    elif action == "reopen_plan":
-        services.reopen_plan(exp, request.user, request.POST.get("reason", ""))
-        messages.success(request, "Plan reopened.")
+    elif action == "add_to_run":
+        run = get_object_or_404(SequencingRun, pk=request.POST.get("run"))
+        services.add_experiment_to_run(run, exp)
+        messages.success(request, f"{exp.code} added to run {run.run_id}. Distribute the sample indexes there.")
+        return redirect(run)
     elif action == "libprep_done":
         rows = None
         if request.FILES.get("manifest"):
@@ -160,11 +155,7 @@ def experiment_action(request, pk, action):
     elif action in ("hold", "cancel", "resume"):
         target = {"hold": Experiment.Status.ON_HOLD, "cancel": Experiment.Status.CANCELLED,
                   "resume": Experiment.Status.SUBMITTED}[action]
-        reason = request.POST.get("reason", "").strip()
-        if not reason:
-            raise PlannerError("A reason is required.")
-        services.add_deviation(request.user, f"Status → {target.label}: {reason}", experiment=exp)
-        services.set_status(exp, target)
+        services.change_hold_status(exp, request.user, target, request.POST.get("reason", ""))
     else:
         raise PlannerError("Unknown action.")
     return redirect(exp)
@@ -175,9 +166,9 @@ def experiment_download(request, pk, kind):
     exp = get_object_or_404(Experiment, pk=pk)
     if kind == "star":
         if exp.status not in (Experiment.Status.PLAN_APPROVED, Experiment.Status.LIBPREP_DONE,
-                              Experiment.Status.RUN_PLANNED, Experiment.Status.SUBMITTED_TO_PROVIDER,
+                              Experiment.Status.SUBMITTED_TO_PROVIDER,
                               Experiment.Status.DATA_DELIVERED) and not request.GET.get("draft"):
-            messages.error(request, "The robot file is only available for an approved plan (use the draft link for testing).")
+            messages.error(request, "The robot file is only available once the final plan is approved (use the draft link for testing).")
             return redirect(exp)
         prefix = "" if not request.GET.get("draft") else "DRAFT_"
         return _download(exports.star_sample_sheet(exp), f"{prefix}{exp.code}_star_sample_sheet.csv")
@@ -236,6 +227,7 @@ def run_detail(request, pk):
     run = get_object_or_404(SequencingRun.objects.select_related("flowcell_type"), pk=pk)
     rps = list(run.run_pools.select_related("pool__experiment", "pool__i7", "pool__i5"))
     issues = services.check_run(run)
+    done, open_ = services.libprep_progress(run)
     return render(request, "planner/run_detail.html", {
         "run": run, "run_pools": rps, "issues": issues,
         "errors": [i for i in issues if i.level == "error"],
@@ -247,6 +239,8 @@ def run_detail(request, pk):
         "signoffs": run.signoffs.select_related("submitted_by", "decided_by"),
         "deviations": run.deviations.select_related("created_by"),
         "pending_signoff": run.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.RUN_PLAN).first(),
+        "plan_problems": services.final_plan_problems(run) if run.status == SequencingRun.Status.PLANNING else [],
+        "libprep_done": done, "libprep_open": open_,
     })
 
 
@@ -284,14 +278,15 @@ def run_action(request, pk, action):
         messages.success(request, f"Indexes assigned to {n} libraries.")
     elif action == "submit":
         services.submit_run(run, request.user, comment)
-        messages.success(request, "Run plan submitted for review.")
+        messages.success(request, "Final plan submitted. A second person must approve it before library prep starts.")
     elif action in ("approve", "reject"):
         so = get_object_or_404(SignOff, pk=request.POST.get("signoff"), run=run)
         services.decide_run(so, request.user, action == "approve", comment)
-        messages.success(request, "Run plan approved." if action == "approve" else "Run plan rejected and unlocked.")
+        messages.success(request, "Final plan approved — library prep can start." if action == "approve"
+                         else "Final plan rejected and unlocked.")
     elif action == "reopen":
         services.reopen_run(run, request.user, request.POST.get("reason", ""))
-        messages.success(request, "Run plan reopened.")
+        messages.success(request, "Final plan reopened.")
     elif action == "submitted":
         services.mark_run_submitted(run, request.user)
         messages.success(request, "Marked as submitted to the provider.")

@@ -287,6 +287,13 @@ def _hash(snapshot: dict) -> str:
 
 # --------------------------------------------------------------------------- #
 # Experiment workflow
+#
+#   Submitted → Accepted (in planning) → Assigned to NGS run → Final plan in review
+#   → Plan approved (ready for library prep) → Library prep done → Submitted → Data delivered
+#
+# Planning (samples, pools, well barcodes) happens while "Accepted". The experiment is then
+# added to a run; sample indexes are distributed on the run, and ONE final 4-eyes sign-off on
+# the run approves well barcodes + indexes of all its experiments. Only then can lab work start.
 # --------------------------------------------------------------------------- #
 @transaction.atomic
 def accept_experiment(experiment: Experiment, user, comment: str = ""):
@@ -295,20 +302,6 @@ def accept_experiment(experiment: Experiment, user, comment: str = ""):
     SignOff.objects.create(experiment=experiment, step=SignOff.Step.ACCEPT, state=SignOff.State.APPROVED,
                            submitted_by=user, decided_by=user, decided_at=timezone.now(), comment=comment)
     set_status(experiment, Experiment.Status.ACCEPTED)
-
-
-@transaction.atomic
-def submit_plan(experiment: Experiment, user, comment: str = "") -> SignOff:
-    if experiment.status != Experiment.Status.ACCEPTED:
-        raise PlannerError("The experiment must be accepted (and not already in review).")
-    problems = validate_plan(experiment)
-    if problems:
-        raise PlannerError(problems)
-    snap = plan_snapshot(experiment)
-    so = SignOff.objects.create(experiment=experiment, step=SignOff.Step.BARCODE_PLAN, submitted_by=user,
-                                comment=comment, snapshot=snap, snapshot_hash=_hash(snap))
-    set_status(experiment, Experiment.Status.PLAN_IN_REVIEW)
-    return so
 
 
 def _decide(signoff: SignOff, user, approve: bool, comment: str, current_snapshot: dict):
@@ -323,26 +316,6 @@ def _decide(signoff: SignOff, user, approve: bool, comment: str, current_snapsho
     if comment:
         signoff.comment = (signoff.comment + "\n" if signoff.comment else "") + f"[{user}] {comment}"
     signoff.save()
-
-
-@transaction.atomic
-def decide_plan(signoff: SignOff, user, approve: bool, comment: str = ""):
-    exp = signoff.experiment
-    _decide(signoff, user, approve, comment, plan_snapshot(exp))
-    set_status(exp, Experiment.Status.PLAN_APPROVED if approve else Experiment.Status.ACCEPTED)
-
-
-@transaction.atomic
-def reopen_plan(experiment: Experiment, user, reason: str):
-    """Unlock an approved plan. Requires a reason, which is stored as a deviation."""
-    if not reason.strip():
-        raise PlannerError("A reason is required to reopen an approved plan.")
-    if experiment.status not in (Experiment.Status.PLAN_IN_REVIEW, Experiment.Status.PLAN_APPROVED):
-        raise PlannerError("Only plans in review or approved (before library prep) can be reopened.")
-    Deviation.objects.create(experiment=experiment, created_by=user, description=f"Plan reopened: {reason}")
-    experiment.signoffs.filter(step=SignOff.Step.BARCODE_PLAN, state__in=[SignOff.State.PENDING, SignOff.State.APPROVED]) \
-        .update(state=SignOff.State.SUPERSEDED)
-    set_status(experiment, Experiment.Status.ACCEPTED)
 
 
 def compare_manifest(experiment: Experiment, rows: list[dict]) -> list[str]:
@@ -363,9 +336,10 @@ def compare_manifest(experiment: Experiment, rows: list[dict]) -> list[str]:
 
 @transaction.atomic
 def record_libprep_done(experiment: Experiment, user, comment: str = "", manifest_rows: list[dict] | None = None) -> list[str]:
-    expected = Experiment.Status.PLAN_APPROVED if experiment.is_tag_and_pool else Experiment.Status.ACCEPTED
-    if experiment.status != expected:
-        raise PlannerError(f"Library prep can be recorded when the status is '{Experiment.Status(expected).label}'.")
+    """Library prep (well barcodes AND sample-index PCR) finished for this experiment."""
+    if experiment.status != Experiment.Status.PLAN_APPROVED:
+        raise PlannerError("Library prep can only be recorded after the final plan (barcodes + indexes) "
+                           "of its sequencing run has been approved.")
     diffs = compare_manifest(experiment, manifest_rows) if manifest_rows is not None else []
     if diffs:
         Deviation.objects.create(experiment=experiment, created_by=user,
@@ -382,6 +356,22 @@ def add_deviation(user, description: str, experiment=None, run=None) -> Deviatio
     return Deviation.objects.create(experiment=experiment, run=run, created_by=user, description=description)
 
 
+@transaction.atomic
+def change_hold_status(experiment: Experiment, user, target: str, reason: str):
+    """Put on hold / cancel / resume. Not possible while the experiment is in a sequencing run."""
+    if not reason.strip():
+        raise PlannerError("A reason is required.")
+    if experiment.pools.filter(run_links__isnull=False).exists():
+        raise PlannerError("The experiment is in a sequencing run. Remove it from the run first "
+                           "(possible while the run is in planning).")
+    if target == Experiment.Status.SUBMITTED and experiment.status not in (Experiment.Status.ON_HOLD, Experiment.Status.CANCELLED):
+        raise PlannerError("Only experiments on hold or cancelled can be resumed.")
+    add_deviation(user, f"Status → {Experiment.Status(target).label}: {reason}", experiment=experiment)
+    if target == Experiment.Status.SUBMITTED and experiment.signoffs.filter(step=SignOff.Step.ACCEPT).exists():
+        target = Experiment.Status.ACCEPTED  # was accepted before → back to planning
+    set_status(experiment, target)
+
+
 # --------------------------------------------------------------------------- #
 # Sequencing runs
 # --------------------------------------------------------------------------- #
@@ -390,18 +380,27 @@ def _check_run_unlocked(run: SequencingRun):
         raise PlannerError("The run plan is locked (in review or approved). Reopen it first.")
 
 
+def ready_for_run(experiment: Experiment) -> list[str]:
+    """Problems that prevent adding the experiment to a run (empty list = ready)."""
+    if experiment.status != Experiment.Status.ACCEPTED:
+        return [f"Status is '{experiment.get_status_display()}' — only accepted experiments in planning can be added."]
+    problems = validate_plan(experiment)
+    if not experiment.pools.exists():
+        problems.append("No pools/libraries yet" + (" — create the barcode plan." if experiment.is_tag_and_pool else
+                                                     " — upload the sample list."))
+    return problems
+
+
 @transaction.atomic
 def add_experiment_to_run(run: SequencingRun, experiment: Experiment):
-    """Add all pools of an experiment; the requested reads are split by number of samples per pool."""
+    """Add all pools of a fully planned experiment; the requested reads are split by samples per pool."""
     _check_run_unlocked(run)
-    ready = {Experiment.Status.LIBPREP_DONE, Experiment.Status.RUN_PLANNED,
-             Experiment.Status.PLAN_APPROVED if experiment.is_tag_and_pool else Experiment.Status.ACCEPTED}
-    if experiment.status not in ready:
-        raise PlannerError("The experiment is not ready for run planning "
-                           + ("(approve its barcode plan first)." if experiment.is_tag_and_pool else "(accept it first)."))
+    if run.status != SequencingRun.Status.PLANNING:
+        raise PlannerError("Experiments can only be added to runs in planning.")
+    problems = ready_for_run(experiment)
+    if problems:
+        raise PlannerError([f"{experiment.code} is not ready for a run:"] + problems)
     pools = list(experiment.pools.all())
-    if not pools:
-        raise PlannerError("The experiment has no pools/libraries yet.")
     if run.r1_length is None and not run.run_pools.exists():
         run.r1_length, run.r2_length = experiment.r1_length, experiment.r2_length
         run.i7_length, run.i5_length = experiment.i7_length, experiment.i5_length
@@ -411,12 +410,21 @@ def add_experiment_to_run(run: SequencingRun, experiment: Experiment):
         share = max(p.samples.count(), 1) / total_samples
         RunPool.objects.update_or_create(run=run, pool=p, defaults={
             "target_m_read_pairs": round((experiment.requested_m_read_pairs or 0) * share, 1)})
+    set_status(experiment, Experiment.Status.IN_RUN)
 
 
 @transaction.atomic
 def remove_experiment_from_run(run: SequencingRun, experiment: Experiment):
+    """Back to planning: indexes are cleared, the barcode plan can be edited again."""
     _check_run_unlocked(run)
-    RunPool.objects.filter(run=run, pool__experiment=experiment).delete()
+    links = RunPool.objects.filter(run=run, pool__experiment=experiment)
+    if not links.exists():
+        raise PlannerError(f"{experiment.code} is not in this run.")
+    for rp in links.select_related("pool"):
+        rp.pool.i7 = rp.pool.i5 = None
+        rp.pool.save()
+    links.delete()
+    set_status(experiment, Experiment.Status.ACCEPTED)
 
 
 def run_libraries(run: SequencingRun) -> list[checks.Library]:
@@ -515,51 +523,84 @@ def assign_indexes(run: SequencingRun, index_set: IndexSet, overwrite: bool = Fa
 
 def _set_run_experiments_status(run: SequencingRun, status: str):
     for e in run.experiments():
-        if e.status not in (Experiment.Status.CANCELLED, Experiment.Status.ON_HOLD):
-            set_status(e, status)
+        set_status(e, status)
+
+
+def final_plan_snapshot(run: SequencingRun) -> dict:
+    """What the final sign-off approves: run settings, indexes, AND every experiment's barcode plan."""
+    return {"run": run_snapshot(run),
+            "experiments": [plan_snapshot(e) for e in run.experiments().order_by("code")]}
+
+
+def final_plan_problems(run: SequencingRun) -> list[str]:
+    problems = [i.message for i in check_run(run) if i.level == "error"]
+    for e in run.experiments().order_by("code"):
+        problems += [f"{e.code}: {p}" for p in validate_plan(e)]
+    if not run.run_pools.exists():
+        problems.append("No experiments in this run.")
+    return problems
 
 
 @transaction.atomic
 def submit_run(run: SequencingRun, user, comment: str = "") -> SignOff:
+    """Submit the final plan (well barcodes of all experiments + sample indexes) for 4-eyes review."""
     if run.status != SequencingRun.Status.PLANNING:
         raise PlannerError("Only runs in planning can be submitted for review.")
-    errors = [i.message for i in check_run(run) if i.level == "error"]
-    if errors:
-        raise PlannerError(errors)
-    snap = run_snapshot(run)
+    problems = final_plan_problems(run)
+    if problems:
+        raise PlannerError(problems)
+    snap = final_plan_snapshot(run)
     so = SignOff.objects.create(run=run, step=SignOff.Step.RUN_PLAN, submitted_by=user, comment=comment,
                                 snapshot=snap, snapshot_hash=_hash(snap))
     run.status = SequencingRun.Status.IN_REVIEW
     run.save()
+    _set_run_experiments_status(run, Experiment.Status.PLAN_IN_REVIEW)
     return so
 
 
 @transaction.atomic
 def decide_run(signoff: SignOff, user, approve: bool, comment: str = ""):
     run = signoff.run
-    _decide(signoff, user, approve, comment, run_snapshot(run))
+    _decide(signoff, user, approve, comment, final_plan_snapshot(run))
     run.status = SequencingRun.Status.APPROVED if approve else SequencingRun.Status.PLANNING
     run.save()
-    if approve:
-        _set_run_experiments_status(run, Experiment.Status.RUN_PLANNED)
+    _set_run_experiments_status(run, Experiment.Status.PLAN_APPROVED if approve else Experiment.Status.IN_RUN)
 
 
 @transaction.atomic
 def reopen_run(run: SequencingRun, user, reason: str):
+    """Unlock the final plan. Only possible before any library prep of this run was recorded."""
     if not reason.strip():
         raise PlannerError("A reason is required.")
     if run.status not in (SequencingRun.Status.IN_REVIEW, SequencingRun.Status.APPROVED):
-        raise PlannerError("Only runs in review or approved (not yet submitted) can be reopened.")
-    Deviation.objects.create(run=run, created_by=user, description=f"Run plan reopened: {reason}")
-    run.signoffs.filter(state__in=[SignOff.State.PENDING, SignOff.State.APPROVED]).update(state=SignOff.State.SUPERSEDED)
+        raise PlannerError("Only runs in review or approved can be reopened.")
+    started = [e.code for e in run.experiments() if e.status != Experiment.Status.PLAN_APPROVED
+               and e.status != Experiment.Status.PLAN_IN_REVIEW]
+    if started:
+        raise PlannerError(f"Library prep has already been recorded for {', '.join(started)} — "
+                           "the plan can no longer be reopened. Record a deviation instead.")
+    Deviation.objects.create(run=run, created_by=user, description=f"Final plan reopened: {reason}")
+    run.signoffs.filter(step=SignOff.Step.RUN_PLAN, state__in=[SignOff.State.PENDING, SignOff.State.APPROVED]) \
+        .update(state=SignOff.State.SUPERSEDED)
     run.status = SequencingRun.Status.PLANNING
     run.save()
+    _set_run_experiments_status(run, Experiment.Status.IN_RUN)
+
+
+def libprep_progress(run: SequencingRun) -> tuple[list[Experiment], list[Experiment]]:
+    exps = list(run.experiments().order_by("code"))
+    done = [e for e in exps if e.status in (Experiment.Status.LIBPREP_DONE, Experiment.Status.SUBMITTED_TO_PROVIDER,
+                                            Experiment.Status.DATA_DELIVERED)]
+    return done, [e for e in exps if e not in done]
 
 
 @transaction.atomic
 def mark_run_submitted(run: SequencingRun, user):
     if run.status != SequencingRun.Status.APPROVED:
-        raise PlannerError("Approve the run plan first.")
+        raise PlannerError("Approve the final plan first.")
+    _, open_ = libprep_progress(run)
+    if open_:
+        raise PlannerError(f"Library prep not yet recorded for: {', '.join(e.code for e in open_)}.")
     run.status = SequencingRun.Status.SUBMITTED
     if not run.planned_submission_date:
         run.planned_submission_date = timezone.localdate()

@@ -80,8 +80,7 @@ class AddExperimentForm(forms.Form):
 
     def __init__(self, *args, run=None, **kwargs):
         super().__init__(*args, **kwargs)
-        statuses = [Experiment.Status.ACCEPTED, Experiment.Status.PLAN_APPROVED, Experiment.Status.LIBPREP_DONE]
-        qs = Experiment.objects.filter(status__in=statuses)
+        qs = Experiment.objects.filter(status=Experiment.Status.ACCEPTED)  # planned, not yet in a run
         if run is not None:
             qs = qs.exclude(pools__run_links__run=run)
         self.fields["experiment"].queryset = qs.distinct().order_by("code")
@@ -90,3 +89,9 @@ class AddExperimentForm(forms.Form):
 class AssignIndexForm(forms.Form):
     index_set = forms.ModelChoiceField(queryset=IndexSet.objects.all())
     overwrite = forms.BooleanField(required=False, help_text="re-assign indexes that are already set in this run")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        sets = list(self.fields["index_set"].queryset[:2])
+        if len(sets) == 1:
+            self.fields["index_set"].initial = sets[0].pk

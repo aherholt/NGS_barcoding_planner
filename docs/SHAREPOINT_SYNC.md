@@ -17,7 +17,7 @@ itself, so recipients and texts are maintained in one place.
 | Requested read length (R1 and R2) – multiple lines of text | replace by four **Number** columns: `R1 length`, `R2 length`, `i7 length`, `i5 length` |
 | Requested Data Output (in M Reads) | keep; column description: "total for the experiment, **million read pairs**" |
 | NGS run ID – Choice | change to **Single line of text**; written by the app |
-| Status – Choice | choices exactly as the app labels: Submitted, Accepted, Barcode plan in review, Barcode plan approved, Library prep done, Run planned, Submitted to provider, Data delivered, On hold, Cancelled |
+| Status – Choice | choices exactly as the app labels: Submitted, Accepted – in planning, Assigned to NGS run, Final plan in review, Plan approved – ready for library prep, Library prep done, Submitted to provider, Data delivered, On hold, Cancelled |
 | Sample number (per pool), Number of pools, Total | keep as planning estimates; the real pools live in the app |
 | new: Data delivery deadline – Date | used for run planning |
 
@@ -67,11 +67,12 @@ retried on the next sync.
 3. Condition: `Has Column Changed: Status` is true. (Without this, every edit would send an email.)
 4. Switch on **Status**:
    * Submitted → email Library prep + NGS orga
-   * Accepted → email scientist (Responsible Person_Assay)
-   * Barcode plan in review → email Library prep + NGS orga ("please approve")
-   * Barcode plan approved → email Library prep
+   * Accepted – in planning → email scientist (Responsible Person_Assay) + Library prep
+   * Assigned to NGS run → email NGS orga (+ link to run ID)
+   * Final plan in review → email NGS orga + Library prep ("please approve")
+   * Plan approved – ready for library prep → email Library prep ("start library prep")
    * Library prep done → email NGS orga
-   * Run planned / Submitted to provider / Data delivered → email scientist (+ link to run ID)
+   * Submitted to provider / Data delivered → email scientist (+ run ID)
 5. Enable versioning on the list (List settings → Versioning) — required for "Get changes".
 
 ## Not done yet

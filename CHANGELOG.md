@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 – 2026-10-06
+Workflow order changed: everything is planned and approved **before** library prep.
+- New order: accept → plan pools/barcodes → add to NGS run → distribute sample indexes →
+  final 4-eyes approval per run (barcodes of all experiments + indexes) → library prep → submit → data.
+- Removed the separate per-experiment barcode-plan approval; the run's final approval covers it
+  (frozen snapshot of run + all experiment plans).
+- New experiment status "Assigned to NGS run"; statuses renamed ("Accepted – in planning",
+  "Final plan in review", "Plan approved – ready for library prep"); "Run planned" removed.
+- Only complete plans can be added to a run; removing an experiment from a run clears its indexes and
+  unlocks its plan. Experiments can be added to a run directly from the experiment page.
+- Robot file and library-prep recording only after final approval; run can be submitted to the provider
+  only when library prep of all its experiments is recorded; final plan can be reopened only before the
+  first library prep is recorded.
+- Hold/cancel only for experiments not in a run.
+- Migration 0002 converts existing records (old pending barcode-plan approvals become "superseded").
+- SharePoint: update the Status choice values (docs/SHAREPOINT_SYNC.md).
+
 ## 0.1.0 – 2026-10-05
 First version.
 - Experiments (SharePoint intake fields), sample list upload (CSV/Excel), Tag&Pool barcode planner

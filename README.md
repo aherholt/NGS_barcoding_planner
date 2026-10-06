@@ -37,19 +37,35 @@ SharePoint list ──sync──►  Experiment ──► Samples ──► Pool
 
 ## 2. Workflow
 
-| # | Who | Where | What happens | Status (→ SharePoint → email) |
+**Principle: everything is planned and approved before any lab work starts.** Well barcodes *and*
+sample indexes are fixed in one final plan per sequencing run, approved by a second person; only then
+are the robot file and the index assignments released for library prep.
+
+| # | Who | Where | What happens | Experiment status (→ SharePoint → email) |
 |---|---|---|---|---|
 | 1 | Scientist | SharePoint | adds the experiment | Submitted |
-| 2 | NGS orga | Experiment page | checks details, **Accept** | Accepted |
-| 3 | Technician | Experiment page | uploads sample list, **Plan pools & barcodes**, **Submit** | Barcode plan in review |
-| 4 | 2nd person | Experiment page | **Approve** (or reject) | Barcode plan approved |
-| 5 | Technician | STAR | downloads robot CSV, runs the protocol, **Record library prep** (+ `pool_manifest.csv` check) | Library prep done |
-| 6 | Bioinformatician | Run page | creates run, adds experiments, **Assign indexes**, reviews checks, **Submit** | – |
-| 7 | 2nd person | Run page | **Approve** | Run planned |
-| 8 | Bioinformatician | Run page | downloads sample sheet, sends libraries, **Mark submitted** / **Mark delivered** | Submitted to provider / Data delivered |
+| 2 | NGS orga | Experiment page | checks details, **Accept** | Accepted – in planning |
+| 3 | Technician | Experiment page | uploads sample list; Tag&Pool: **Plan pools & barcodes** | (unchanged) |
+| 4 | Bioinformatician | Experiment / run page | creates a run, **adds planned experiments** (compatible read structure, timing, capacity) | Assigned to NGS run |
+| 5 | Bioinformatician | Run page | **Distribute sample indexes**, reviews checks, **Submit final plan** | Final plan in review |
+| 6 | 2nd person | Run page | **Approve** (or reject) the final plan — barcodes of all experiments + indexes | Plan approved – ready for library prep |
+| 7 | Technician | Experiment page / STAR | downloads robot CSV, runs protocol + index PCR, **Record library prep** (+ `pool_manifest.csv` check) | Library prep done |
+| 8 | Bioinformatician | Run page | when all experiments are done: **Mark submitted**, later **Mark delivered** | Submitted to provider / Data delivered |
 
-Non-Tag&Pool experiments skip steps 3–4: after acceptance, upload the sample list (each sample becomes
-one library) and record library prep.
+Rules that enforce the order:
+* An experiment can only be added to a run when its plan is complete (samples, positions, pools,
+  barcodes, read structure, requested reads).
+* While an experiment is in a run, its samples/pools/barcodes are locked. To change them, remove it from
+  the run (only while the run is in planning) — its indexes are cleared and it goes back to planning.
+* The final approval covers a frozen copy of the run *and* every experiment plan in it; any change after
+  submission blocks the approval.
+* The STAR robot file and "Record library prep" are only available after the final approval.
+* The final plan can be reopened (with a reason, stored as deviation) only until the first library prep
+  of that run has been recorded. After that, changes are documented as deviations.
+* The run can be marked "submitted to provider" only when library prep of all its experiments is recorded.
+
+Non-Tag&Pool experiments (bulk RNA-seq, snRNA-seq, CRISPR screens) follow the same path; step 3 is just
+the sample-list upload (each sample becomes one indexed library).
 
 ### Run checks (shown live on the run page)
 
@@ -87,9 +103,15 @@ pytest
 python manage.py runserver
 ```
 
-Open <http://127.0.0.1:8000>, log in as `tech`, open **TP26-001**, upload
-`data\templates\sample_list_template.csv` (or your own list), click **Plan pools & barcodes**, then log
-in as `alex` in a private browser window to approve. That is the whole 4-eyes loop.
+Open <http://127.0.0.1:8000> and walk through one experiment:
+
+1. Log in as `tech`, open **TP26-001**, click **Accept experiment**.
+2. Upload `data\templates\sample_list_template.csv` (or your own list), click **Plan pools & barcodes**.
+3. Click **Create a new NGS run** (any run ID, choose a flow cell), go back to TP26-001 and **Add to run**.
+4. On the run page choose the index set → **Assign**, check the checks, **Submit final plan for approval**.
+5. Log in as `alex` in a private browser window → open the run → **Approve final plan**.
+6. As `tech`: on TP26-001 download the STAR file, then **Record library prep as done**.
+7. On the run: **Mark as submitted to provider**.
 
 To start again from scratch: stop the server (Ctrl+C), `Remove-Item db.sqlite3`, repeat step 3.
 

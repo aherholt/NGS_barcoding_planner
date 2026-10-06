@@ -71,6 +71,6 @@ def test_status_change_pushes(db, fake, users):
     sharepoint.pull()
     e = Experiment.objects.get(sharepoint_item_id=12)
     services.accept_experiment(e, users["bioinf"])
-    assert fake.patched[-1] == (12, {"Status": "Accepted"})
+    assert fake.patched[-1] == (12, {"Status": "Accepted – in planning"})
     e.refresh_from_db()
     assert e.sharepoint_push_pending is False

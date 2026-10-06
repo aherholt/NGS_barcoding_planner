@@ -13,39 +13,55 @@
 <div>
   <div class="card">
     <h2>Next step</h2>
+    <ol class="steps">
+      <li class="{% if run.status == 'planning' %}now{% else %}done{% endif %}">Add experiments &amp; distribute indexes</li>
+      <li class="{% if run.status == 'in_review' %}now{% elif run.status != 'planning' %}done{% endif %}">Final plan approved (4-eyes)</li>
+      <li class="{% if run.status == 'approved' %}now{% elif run.status == 'submitted' or run.status == 'data_delivered' %}done{% endif %}">Library prep</li>
+      <li class="{% if run.status == 'submitted' %}now{% elif run.status == 'data_delivered' %}done{% endif %}">Sequencing &amp; data</li>
+    </ol>
     {% if run.status == "planning" %}
       <div class="grid">
         <form method="post" action="{% url 'run_action' run.pk 'add_experiment' %}">{% csrf_token %}
-          <b>1. Add an experiment</b><br>{{ add_form.experiment }}
-          <div class="help">All its pools are added; the requested reads are split by samples per pool.</div>
+          <b>1. Add planned experiments</b><br>{{ add_form.experiment }}
+          <div class="help">Only accepted experiments with a complete plan can be added. All their pools are added;
+            the requested reads are split by samples per pool.</div>
           <p><button class="secondary">Add</button></p></form>
         <form method="post" action="{% url 'run_action' run.pk 'assign_indexes' %}">{% csrf_token %}
-          <b>2. Assign sample indexes</b><br>{{ index_form.index_set }}<br>
+          <b>2. Distribute sample indexes</b><br>{{ index_form.index_set }}<br>
           <label>{{ index_form.overwrite }} {{ index_form.overwrite.help_text }}</label>
-          <div class="help">Picks unused i7/i5 pairs, preferring unique i7 and i5 and large distances.</div>
+          <div class="help">Picks unused i7/i5 pairs, preferring unique i7 and i5 and large distances.
+            Do this after all experiments are in the run.</div>
           <p><button class="secondary">Assign</button></p></form>
       </div>
       <form method="post" action="{% url 'run_action' run.pk 'submit' %}">{% csrf_token %}
-        <b>3. Submit for review</b> (a second person approves)<div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
-        <p><button {% if errors or not run_pools %}disabled title="fix the errors in the checks first"{% endif %}>Submit run plan</button></p></form>
+        <b>3. Submit the final plan</b> — well barcodes of all experiments + sample indexes. A second person approves it;
+        then everything is locked and library prep can start.
+        {% if plan_problems %}{% for p in plan_problems %}<div class="issue error">{{ p }}</div>{% endfor %}{% endif %}
+        <div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
+        <p><button {% if plan_problems %}disabled title="fix the problems listed above first"{% endif %}>Submit final plan for approval</button></p></form>
     {% elif run.status == "in_review" and pending_signoff %}
-      <p>Submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.</p>
+      <p>Final plan submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.
+        Please check the indexes and checks on this page and the well-barcode plan of each experiment
+        ({% for e in experiments %}<a href="{{ e.get_absolute_url }}">{{ e.code }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}).</p>
       {% if pending_signoff.submitted_by_id == user.pk %}<p class="muted">Waiting for a second person (4-eyes principle).</p>
       {% else %}
       <form method="post" action="{% url 'run_action' run.pk 'approve' %}">{% csrf_token %}
         <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
-        <p class="actions"><button>Approve run plan</button>
+        <p class="actions"><button>Approve final plan</button>
           <button class="danger" formaction="{% url 'run_action' run.pk 'reject' %}">Reject</button></p></form>
       {% endif %}
     {% elif run.status == "approved" %}
-      <p>Approved. Download the sample sheet for the provider, send the libraries, then mark the run as submitted.</p>
-      <form method="post" action="{% url 'run_action' run.pk 'submitted' %}">{% csrf_token %}<button>Mark as submitted to provider</button></form>
+      <p>Final plan approved — library prep is running. Record it on each experiment page.</p>
+      <table>{% for e in libprep_done %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge ok">Library prep done</span></td></tr>{% endfor %}
+        {% for e in libprep_open %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge warn">waiting</span></td></tr>{% endfor %}</table>
+      <form method="post" action="{% url 'run_action' run.pk 'submitted' %}">{% csrf_token %}
+        <p><button {% if libprep_open %}disabled title="library prep of all experiments must be recorded first"{% endif %}>Mark as submitted to provider</button></p></form>
     {% elif run.status == "submitted" %}
       <form method="post" action="{% url 'run_action' run.pk 'delivered' %}">{% csrf_token %}{{ comment_form.comment }}
         <p><button>Mark data as delivered</button></p></form>
     {% else %}<p>{{ run.get_status_display }}.</p>{% endif %}
-    {% if run.status == "in_review" or run.status == "approved" %}
-      <details><summary>Reopen the run plan (needs a reason)</summary>
+    {% if run.status == "in_review" or run.status == "approved" and not libprep_done %}
+      <details><summary>Reopen the final plan (needs a reason; only before any library prep is recorded)</summary>
         <form method="post" action="{% url 'run_action' run.pk 'reopen' %}">{% csrf_token %}{{ reason_form.reason }}
           <p><button class="secondary">Reopen</button></p></form></details>
     {% endif %}
@@ -67,7 +83,7 @@
     {% if run_pools and not run.locked %}<p><button class="secondary">Save read targets</button></p>{% endif %}
     </form>
     {% if experiments and not run.locked %}
-      <details><summary>Remove an experiment</summary>
+      <details><summary>Remove an experiment (back to planning; its indexes are cleared)</summary>
         <form method="post" action="{% url 'run_action' run.pk 'remove_experiment' %}">{% csrf_token %}
           <select name="experiment">{% for e in experiments %}<option value="{{ e.pk }}">{{ e.code }}</option>{% endfor %}</select>
           <button class="secondary">Remove</button></form></details>

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 – 2026-10-06
+Amendments: change one experiment inside an approved run.
+- "Reopen this experiment's plan" on the experiment page while its library prep has not been recorded;
+  other experiments of the run keep their approval and continue library prep.
+- New status "Plan reopened – amendment"; pools leave the run (indexes kept), plan is editable, live preview
+  of indexes and run checks (option: new indexes for this experiment).
+- "Submit amendment" re-adds the pools, assigns missing indexes and repeats all run checks across the
+  entire run; refused (nothing saved) if any check fails. 4-eyes approval of the amendment.
+- While an amendment is open: run downloads are DRAFT_, run cannot be submitted, whole-run reopen blocked.
+- Disabled buttons are now greyed out.
+
 ## 0.2.0 – 2026-10-06
 Workflow order changed: everything is planned and approved **before** library prep.
 - New order: accept → plan pools/barcodes → add to NGS run → distribute sample indexes →

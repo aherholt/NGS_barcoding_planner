@@ -49,6 +49,7 @@ are the robot file and the index assignments released for library prep.
 | 4 | Bioinformatician | Experiment / run page | creates a run, **adds planned experiments** (compatible read structure, timing, capacity) | Assigned to NGS run |
 | 5 | Bioinformatician | Run page | **Distribute sample indexes**, reviews checks, **Submit final plan** | Final plan in review |
 | 6 | 2nd person | Run page | **Approve** (or reject) the final plan — barcodes of all experiments + indexes | Plan approved – ready for library prep |
+| (6a) | anyone + 2nd person | Experiment page | optional **amendment** of one experiment (see below) | Plan reopened – amendment → Final plan in review → Plan approved |
 | 7 | Technician | Experiment page / STAR | downloads robot CSV, runs protocol + index PCR, **Record library prep** (+ `pool_manifest.csv` check) | Library prep done |
 | 8 | Bioinformatician | Run page | when all experiments are done: **Mark submitted**, later **Mark delivered** | Submitted to provider / Data delivered |
 
@@ -60,8 +61,16 @@ Rules that enforce the order:
 * The final approval covers a frozen copy of the run *and* every experiment plan in it; any change after
   submission blocks the approval.
 * The STAR robot file and "Record library prep" are only available after the final approval.
-* The final plan can be reopened (with a reason, stored as deviation) only until the first library prep
-  of that run has been recorded. After that, changes are documented as deviations.
+* **Changing one experiment after approval (amendment):** on the experiment page, "Reopen this
+  experiment's plan" (reason required → deviation) — possible as long as library prep of *this*
+  experiment has not been recorded. The other experiments of the run keep their approval and their
+  library prep continues. The amended experiment's pools leave the run (their indexes are kept); you change
+  samples/pools/barcodes or an index, see a live preview of the run checks, and "Submit amendment": the
+  pools re-join the run, missing indexes are assigned, and **all run checks are repeated across the entire
+  run** (unique index pairs, distances, colour balance, capacity). Submission is refused if any check fails.
+  A second person approves the amendment; then library prep of that experiment can start.
+* The whole final plan can be reopened (on the run page) only until the first library prep of that run is
+  recorded. While an amendment is open, run downloads are drafts and the run cannot be submitted.
 * The run can be marked "submitted to provider" only when library prep of all its experiments is recorded.
 
 Non-Tag&Pool experiments (bulk RNA-seq, snRNA-seq, CRISPR screens) follow the same path; step 3 is just

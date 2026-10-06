@@ -52,16 +52,22 @@
       {% endif %}
     {% elif run.status == "approved" %}
       <p>Final plan approved — library prep is running. Record it on each experiment page.</p>
+      {% if amendments %}<div class="issue warning"><b>Open amendment(s):</b>
+        {% for e in amendments %}<a href="{{ e.get_absolute_url }}">{{ e.code }}</a> ({{ e.get_status_display }}){% if not forloop.last %}, {% endif %}{% endfor %}.
+        While being amended, an experiment's libraries are not listed below; they re-join the run (with a full re-check)
+        when the amendment is submitted. Downloads are drafts until approved; the run cannot be submitted before.</div>{% endif %}
+      {% for so in pending_amendments %}<div class="issue info">Amendment of <a href="{{ so.experiment.get_absolute_url }}">{{ so.experiment.code }}</a>
+        waiting for approval (submitted by {{ so.submitted_by }}) — approve on the experiment page.</div>{% endfor %}
       <table>{% for e in libprep_done %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge ok">Library prep done</span></td></tr>{% endfor %}
         {% for e in libprep_open %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge warn">waiting</span></td></tr>{% endfor %}</table>
       <form method="post" action="{% url 'run_action' run.pk 'submitted' %}">{% csrf_token %}
-        <p><button {% if libprep_open %}disabled title="library prep of all experiments must be recorded first"{% endif %}>Mark as submitted to provider</button></p></form>
+        <p><button {% if libprep_open or amendments %}disabled title="library prep of all experiments must be recorded and amendments approved first"{% endif %}>Mark as submitted to provider</button></p></form>
     {% elif run.status == "submitted" %}
       <form method="post" action="{% url 'run_action' run.pk 'delivered' %}">{% csrf_token %}{{ comment_form.comment }}
         <p><button>Mark data as delivered</button></p></form>
     {% else %}<p>{{ run.get_status_display }}.</p>{% endif %}
     {% if run.status == "in_review" or run.status == "approved" and not libprep_done %}
-      <details><summary>Reopen the final plan (needs a reason; only before any library prep is recorded)</summary>
+      <details><summary>Reopen the whole final plan (needs a reason; only before any library prep is recorded — to change a single experiment, reopen it on its experiment page)</summary>
         <form method="post" action="{% url 'run_action' run.pk 'reopen' %}">{% csrf_token %}{{ reason_form.reason }}
           <p><button class="secondary">Reopen</button></p></form></details>
     {% endif %}
@@ -116,7 +122,7 @@
 
   <div class="card">
     <h2>Downloads</h2>
-    {% if run.status != "approved" and run.status != "submitted" and run.status != "data_delivered" %}<p class="help">Draft files (not approved) are prefixed DRAFT_.</p>{% endif %}
+    {% if amendments or run.status != "approved" and run.status != "submitted" and run.status != "data_delivered" %}<p class="help">Draft files (not approved) are prefixed DRAFT_.</p>{% endif %}
     <p><a href="{% url 'run_download' run.pk 'samplesheet' %}">Illumina sample sheet v2 (BCL Convert)</a></p>
     <p><a href="{% url 'run_download' run.pk 'provider' %}">Library list for provider (.csv)</a></p>
     <p><a href="{% url 'run_download' run.pk 'barcode_map' %}">Barcode map, all samples (.csv)</a></p>

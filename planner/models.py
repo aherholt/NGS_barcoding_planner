@@ -148,6 +148,7 @@ class Experiment(models.Model):
         IN_RUN = "in_run", "Assigned to NGS run"
         PLAN_IN_REVIEW = "plan_in_review", "Final plan in review"
         PLAN_APPROVED = "plan_approved", "Plan approved – ready for library prep"
+        AMENDING = "amending", "Plan reopened – amendment"
         LIBPREP_DONE = "libprep_done", "Library prep done"
         SUBMITTED_TO_PROVIDER = "submitted_to_provider", "Submitted to provider"
         DATA_DELIVERED = "data_delivered", "Data delivered"
@@ -186,6 +187,9 @@ class Experiment(models.Model):
     avg_insert_length = models.PositiveIntegerField(null=True, blank=True)
 
     well_barcode_set = models.ForeignKey(WellBarcodeSet, null=True, blank=True, on_delete=models.PROTECT)
+    amendment_run = models.ForeignKey(
+        "SequencingRun", null=True, blank=True, on_delete=models.PROTECT, related_name="amendments",
+        help_text="set while the plan of this experiment is reopened inside an approved run (amendment)")
     planning_seed = models.IntegerField(null=True, blank=True, help_text="random seed of the last automatic barcode layout")
 
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.SUBMITTED)
@@ -335,6 +339,7 @@ class SignOff(models.Model):
         ACCEPT = "accept", "Experiment accepted"
         BARCODE_PLAN = "barcode_plan", "Barcode plan (old workflow, v0.1)"
         RUN_PLAN = "run_plan", "Final plan (well barcodes + sample indexes)"
+        AMENDMENT = "amendment", "Plan amendment (one experiment, re-checked across the run)"
         LIBPREP = "libprep", "Library prep executed"
         DATA_DELIVERED = "data_delivered", "Data delivered"
 

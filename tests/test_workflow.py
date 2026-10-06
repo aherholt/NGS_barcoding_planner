@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from planner import exports, services
-from planner.models import Experiment, Sample, SequencingRun, SignOff
+from planner.models import Experiment, RunPool, Sample, SequencingRun, SignOff
 from planner.services import PlannerError
 
 from .conftest import sample_rows
@@ -254,3 +254,96 @@ def test_i5_reverse_complement_option(tp_experiment, users, index_set, flowcell)
     run.i5_reverse_complement = True  # (in the app this setting is changed before approval)
     run.save()
     assert f",{exports.revcomp(i5)}" in exports.illumina_samplesheet_v2(run)
+
+
+# --------------------------------------------------------------------------- #
+# Amendments: change one experiment inside an approved run
+# --------------------------------------------------------------------------- #
+def _approved_run_with_two(tp_experiment, users, index_set, flowcell):
+    services.upload_samples(tp_experiment, sample_rows(48), users["tech"])
+    services.plan_barcodes(tp_experiment, seed=5)
+    services.accept_experiment(tp_experiment, users["bioinf"])
+    bulk = Experiment.objects.create(code="RNA-2", title="bulk", library_type="bulk_rnaseq", r1_length=28, r2_length=90,
+                                     i7_length=8, i5_length=8, requested_m_read_pairs=100)
+    services.upload_samples(bulk, sample_rows(4), users["tech"])
+    services.accept_experiment(bulk, users["bioinf"])
+    run = SequencingRun.objects.create(run_id="NGS-AM", flowcell_type=flowcell)
+    services.add_experiment_to_run(run, tp_experiment)
+    services.add_experiment_to_run(run, bulk)
+    services.assign_indexes(run, index_set)
+    so = services.submit_run(run, users["bioinf"])
+    services.decide_run(so, users["alex"], approve=True)
+    tp_experiment.refresh_from_db()
+    bulk.refresh_from_db()
+    return run, bulk
+
+
+def test_amend_one_experiment_while_other_is_in_libprep(tp_experiment, users, index_set, flowcell):
+    run, bulk = _approved_run_with_two(tp_experiment, users, index_set, flowcell)
+    services.record_libprep_done(bulk, users["tech"])  # lab work on the other experiment is going on/finished
+    with pytest.raises(PlannerError, match="already been recorded"):
+        services.reopen_run(run, users["alex"], "x")  # whole run can no longer be reopened ...
+    with pytest.raises(PlannerError, match="reason"):
+        services.reopen_experiment(tp_experiment, users["tech"], "")
+    services.reopen_experiment(tp_experiment, users["tech"], "two lysates lost, re-plan pools")  # ... but one experiment can
+    tp_experiment.refresh_from_db()
+    run.refresh_from_db()
+    assert tp_experiment.status == Experiment.Status.AMENDING and tp_experiment.amendment_run == run
+    assert run.status == SequencingRun.Status.APPROVED  # the run and the other experiment keep their approval
+    assert Experiment.objects.get(pk=bulk.pk).status == Experiment.Status.LIBPREP_DONE
+    with pytest.raises(PlannerError, match="amendment"):
+        services.mark_run_submitted(run, users["bioinf"])
+    with pytest.raises(PlannerError, match="final plan"):
+        services.record_libprep_done(tp_experiment, users["tech"])
+
+    # change the plan: drop two samples, re-plan pools (old pools and indexes are gone)
+    rows = sample_rows(48)[:46]
+    services.upload_samples(tp_experiment, rows, users["tech"])
+    services.plan_barcodes(tp_experiment, seed=6)
+    preview = services.preview_amendment(tp_experiment)
+    assert preview["problems"] == [] and all(i7 for _, i7, _ in preview["libraries"])
+    assert not tp_experiment.pools.filter(run_links__isnull=False).exists()  # preview changed nothing
+
+    so = services.submit_amendment(tp_experiment, users["tech"])
+    pairs = [(rp.pool.i7_id, rp.pool.i5_id) for rp in run.run_pools.select_related("pool")]
+    assert len(pairs) == len(set(pairs)) == 2 + 4  # indexes unique across the ENTIRE run
+    with pytest.raises(PlannerError, match="4-eyes"):
+        services.decide_amendment(so, users["tech"], approve=True)
+    services.decide_amendment(so, users["alex"], approve=True)
+    tp_experiment.refresh_from_db()
+    assert tp_experiment.status == Experiment.Status.PLAN_APPROVED and tp_experiment.amendment_run is None
+    assert run.deviations.count() == 1
+    services.record_libprep_done(tp_experiment, users["tech"])
+    services.mark_run_submitted(run, users["bioinf"])
+
+
+def test_amendment_blocked_if_index_collides_across_run(tp_experiment, users, index_set, flowcell):
+    run, bulk = _approved_run_with_two(tp_experiment, users, index_set, flowcell)
+    services.reopen_experiment(tp_experiment, users["tech"], "fix index of pool 1")
+    # someone sets pool 1 to the same index pair as a library of the OTHER experiment
+    other = bulk.pools.select_related("i7", "i5").first()
+    p1 = tp_experiment.pools.order_by("pool_id").first()
+    p1.i7, p1.i5 = other.i7, other.i5
+    p1.save()
+    preview = services.preview_amendment(tp_experiment)
+    assert any("same index pair" in p for p in preview["problems"])
+    with pytest.raises(PlannerError, match="same index pair"):
+        services.submit_amendment(tp_experiment, users["tech"])
+    tp_experiment.refresh_from_db()
+    assert tp_experiment.status == Experiment.Status.AMENDING  # nothing saved
+    assert not RunPool.objects.filter(run=run, pool__experiment=tp_experiment).exists()
+    # with re-assignment the conflict is resolved automatically
+    so = services.submit_amendment(tp_experiment, users["tech"], reassign=True)
+    services.decide_amendment(so, users["alex"], approve=False)  # rejected → open again
+    tp_experiment.refresh_from_db()
+    assert tp_experiment.status == Experiment.Status.AMENDING
+    so = services.submit_amendment(tp_experiment, users["tech"])
+    services.decide_amendment(so, users["alex"], approve=True)
+
+
+def test_cannot_reopen_after_own_libprep(tp_experiment, users, index_set, flowcell):
+    run, bulk = _approved_run_with_two(tp_experiment, users, index_set, flowcell)
+    services.record_libprep_done(tp_experiment, users["tech"])
+    tp_experiment.refresh_from_db()
+    with pytest.raises(PlannerError, match="deviation"):
+        services.reopen_experiment(tp_experiment, users["tech"], "too late")

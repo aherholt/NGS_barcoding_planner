@@ -38,14 +38,48 @@
     {% elif exp.status == "in_run" %}
       <p>Assigned to run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>. On the run page: distribute the sample
         indexes and submit the final plan for approval. To change samples or barcodes, remove the experiment from the run first.</p>
+    {% elif exp.status == "plan_in_review" and pending_signoff %}
+      <p><b>Amendment</b> submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}
+        — all run checks of <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> passed with the amended plan
+        (sample indexes unique and distinct across the entire run).
+        {% if pending_signoff.comment %}<br>Comment: {{ pending_signoff.comment }}{% endif %}</p>
+      {% if pending_signoff.submitted_by_id == user.pk %}<p class="muted">Waiting for a second person (4-eyes principle).</p>
+      {% else %}
+      <form method="post" action="{% url 'experiment_action' exp.pk 'approve_amendment' %}">{% csrf_token %}
+        <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
+        <p class="actions"><button>Approve amendment</button>
+          <button class="danger" formaction="{% url 'experiment_action' exp.pk 'reject_amendment' %}">Reject</button></p></form>
+      {% endif %}
     {% elif exp.status == "plan_in_review" %}
       <p>The final plan of run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> is waiting for approval by a second person.</p>
+    {% elif exp.status == "amending" %}
+      <p>Plan reopened for an amendment inside run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>. The other experiments
+        of the run keep their approval. <b>Do not start library prep of this experiment</b> until the amendment is approved.</p>
+      <p>Change samples, pools or barcodes below (or a pool's index in Admin → Pools). Then submit: the pools re-join the run,
+        missing indexes are assigned, and <b>all run checks are repeated across the entire run</b>.</p>
+      {% if amendment %}
+        <h3 style="font-size:14px;margin:10px 0 4px">Preview — sample indexes {% if request.GET.reassign == "1" %}(re-assigned){% else %}(kept where possible){% endif %}</h3>
+        {% if amendment.libraries %}<table><tr><th>Pool</th><th>i7</th><th>i5</th></tr>
+          {% for pid, i7, i5 in amendment.libraries %}<tr><td>{{ pid }}</td><td class="mono">{{ i7.primer_id }} {{ i7.sequence }}</td><td class="mono">{{ i5.primer_id }} {{ i5.sequence }}</td></tr>{% endfor %}</table>{% endif %}
+        {% for p in amendment.problems %}<div class="issue error">{{ p }}</div>{% empty %}<div class="issue info">✓ All run checks pass with this amendment.</div>{% endfor %}
+        {% for i in amendment.issues %}{% if i.level == "warning" %}<div class="issue warning">{{ i.message }}</div>{% endif %}{% endfor %}
+        <p class="help">{% if request.GET.reassign == "1" %}<a href="?">Preview keeping the current indexes</a>{% else %}<a href="?reassign=1">Preview with new indexes for this experiment</a>{% endif %}</p>
+      {% endif %}
+      <form method="post" action="{% url 'experiment_action' exp.pk 'submit_amendment' %}">{% csrf_token %}
+        <label><input type="checkbox" name="reassign" {% if request.GET.reassign == "1" %}checked{% endif %}> assign new sample indexes for this experiment</label>
+        <div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
+        <p><button {% if not amendment or amendment.problems %}disabled{% endif %}>Submit amendment for approval</button></p></form>
     {% elif exp.status == "plan_approved" %}
       <p>Final plan approved (run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>) — <b>library prep can start</b>.
         {% if exp.is_tag_and_pool %}Download the STAR robot file (right), run the protocol, then the sample-index PCR with the indexes
         shown per pool. Upload the robot's <code>pool_manifest.csv</code> when recording, to compare it with the plan.
         {% else %}Use the sample indexes shown per library below.{% endif %}</p>
       {% include "planner/_libprep_form.html" %}
+      <details><summary>Something must change for this experiment? Reopen its plan (amendment)</summary>
+        <p class="help">Only this experiment is reopened; the other experiments of the run keep their approval and their library prep
+          can continue. The change is re-checked across the entire run and needs 4-eyes approval again.</p>
+        <form method="post" action="{% url 'experiment_action' exp.pk 'reopen' %}">{% csrf_token %}{{ reason_form.reason }}
+          <p><button class="secondary">Reopen this experiment's plan</button></p></form></details>
     {% elif exp.status == "libprep_done" %}
       <p>Library prep done. Run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> is submitted to the provider when all its experiments are done.</p>
     {% else %}
@@ -60,7 +94,7 @@
       {% if exp.planning_seed %}· seed {{ exp.planning_seed }}{% endif %}</span></h2>
 
     {% if exp.plan_locked and exp.status != "cancelled" %}
-      <p class="help">🔒 Locked while the experiment is in run {{ run.run_id|default:"" }}. Sample indexes per pool are shown next to each pool name.</p>
+      <p class="help">🔒 Locked while the experiment is in run {{ run.run_id|default:"" }}{% if exp.status == "plan_approved" %} — use "Reopen this experiment's plan" above to amend it{% endif %}. Sample indexes per pool are shown next to each pool name.</p>
     {% endif %}
     {% if not exp.plan_locked %}
     <div class="grid" style="margin-bottom:12px">

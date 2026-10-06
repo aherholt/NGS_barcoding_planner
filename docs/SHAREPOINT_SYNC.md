@@ -17,7 +17,7 @@ itself, so recipients and texts are maintained in one place.
 | Requested read length (R1 and R2) – multiple lines of text | replace by four **Number** columns: `R1 length`, `R2 length`, `i7 length`, `i5 length` |
 | Requested Data Output (in M Reads) | keep; column description: "total for the experiment, **million read pairs**" |
 | NGS run ID – Choice | change to **Single line of text**; written by the app |
-| Status – Choice | choices exactly as the app labels: Submitted, Accepted – in planning, Assigned to NGS run, Final plan in review, Plan approved – ready for library prep, Library prep done, Submitted to provider, Data delivered, On hold, Cancelled |
+| Status – Choice | choices exactly as the app labels: Submitted, Accepted – in planning, Assigned to NGS run, Final plan in review, Plan approved – ready for library prep, Plan reopened – amendment, Library prep done, Submitted to provider, Data delivered, On hold, Cancelled |
 | Sample number (per pool), Number of pools, Total | keep as planning estimates; the real pools live in the app |
 | new: Data delivery deadline – Date | used for run planning |
 
@@ -71,6 +71,7 @@ retried on the next sync.
    * Assigned to NGS run → email NGS orga (+ link to run ID)
    * Final plan in review → email NGS orga + Library prep ("please approve")
    * Plan approved – ready for library prep → email Library prep ("start library prep")
+   * Plan reopened – amendment → email Library prep + NGS orga ("do not start library prep of this experiment")
    * Library prep done → email NGS orga
    * Submitted to provider / Data delivered → email scientist (+ run ID)
 5. Enable versioning on the list (List settings → Versioning) — required for "Get changes".

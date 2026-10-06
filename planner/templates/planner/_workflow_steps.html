@@ -2,7 +2,7 @@
 <ol class="steps">
   <li class="{% if st == 'submitted' %}now{% else %}done{% endif %}">Accept</li>
   <li class="{% if st == 'accepted' %}now{% elif st == 'submitted' or st == 'on_hold' or st == 'cancelled' %}{% else %}done{% endif %}">{% if exp.is_tag_and_pool %}Plan pools &amp; well barcodes{% else %}Upload samples{% endif %}</li>
-  <li class="{% if st == 'in_run' %}now{% elif st == 'plan_in_review' or st == 'plan_approved' or st == 'libprep_done' or st == 'submitted_to_provider' or st == 'data_delivered' %}done{% endif %}">Add to run, distribute indexes</li>
+  <li class="{% if st == 'in_run' or st == 'amending' %}now{% elif st == 'plan_in_review' or st == 'plan_approved' or st == 'libprep_done' or st == 'submitted_to_provider' or st == 'data_delivered' %}done{% endif %}">Add to run, distribute indexes</li>
   <li class="{% if st == 'plan_in_review' %}now{% elif st == 'plan_approved' or st == 'libprep_done' or st == 'submitted_to_provider' or st == 'data_delivered' %}done{% endif %}">Final plan approved (4-eyes)</li>
   <li class="{% if st == 'plan_approved' %}now{% elif st == 'libprep_done' or st == 'submitted_to_provider' or st == 'data_delivered' %}done{% endif %}">Library prep</li>
   <li class="{% if st == 'libprep_done' or st == 'submitted_to_provider' %}now{% elif st == 'data_delivered' %}done{% endif %}">Sequencing &amp; data</li>

@@ -69,3 +69,31 @@ def test_error_message_shown(client, users, tp_experiment):
     url = reverse("experiment_plan", args=[tp_experiment.pk])
     r = client.post(url, {"shuffle": "on"}, HTTP_REFERER=reverse("experiment_detail", args=[tp_experiment.pk]), follow=True)
     assert "Upload a sample list first" in r.content.decode()
+
+
+def test_amendment_pages(client, users, tp_experiment, index_set, flowcell):
+    from planner import services
+    services.upload_samples(tp_experiment, sample_rows(30), users["tech"])
+    services.plan_barcodes(tp_experiment, seed=1)
+    services.accept_experiment(tp_experiment, users["bioinf"])
+    run = SequencingRun.objects.create(run_id="NGS-V", flowcell_type=flowcell)
+    services.add_experiment_to_run(run, tp_experiment)
+    services.assign_indexes(run, index_set)
+    services.decide_run(services.submit_run(run, users["bioinf"]), users["alex"], approve=True)
+
+    client.force_login(users["tech"])
+    url = reverse("experiment_detail", args=[tp_experiment.pk])
+    assert "Reopen this experiment" in client.get(url).content.decode()
+    client.post(reverse("experiment_action", args=[tp_experiment.pk, "reopen"]), {"reason": "pool size change"})
+    page = client.get(url).content.decode()
+    assert "All run checks pass with this amendment" in page
+    assert client.get(url + "?reassign=1").status_code == 200
+    assert "Open amendment" in client.get(reverse("run_detail", args=[run.pk])).content.decode()
+    assert client.get(reverse("run_download", args=[run.pk, "samplesheet"]))["Content-Disposition"].count("DRAFT_") == 1
+    client.post(reverse("experiment_action", args=[tp_experiment.pk, "submit_amendment"]))
+    client.force_login(users["alex"])
+    so = tp_experiment.signoffs.get(step="amendment")
+    assert "Approve amendment" in client.get(url).content.decode()
+    client.post(reverse("experiment_action", args=[tp_experiment.pk, "approve_amendment"]), {"signoff": so.pk})
+    tp_experiment.refresh_from_db()
+    assert tp_experiment.status == Experiment.Status.PLAN_APPROVED

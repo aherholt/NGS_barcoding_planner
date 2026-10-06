@@ -4,7 +4,7 @@ register = template.Library()
 
 OK = {"plan_approved", "libprep_done", "run_planned", "submitted_to_provider", "data_delivered",
       "approved", "submitted"}
-WARN = {"plan_in_review", "in_review", "on_hold", "pending"}
+WARN = {"plan_in_review", "in_review", "on_hold", "pending", "amending"}
 ERR = {"cancelled", "rejected"}
 
 

@@ -81,10 +81,14 @@ def experiment_detail(request, pk):
     for s in exp.samples.select_related("pool", "well_barcode"):
         (pools[s.pool] if s.pool in pools else unassigned).append(s)
     problems = services.ready_for_run(exp) if exp.status == Experiment.Status.ACCEPTED and exp.samples.exists() else []
-    runs = SequencingRun.objects.filter(run_pools__pool__experiment=exp).distinct()
+    amendment = None
+    if exp.status == Experiment.Status.AMENDING and exp.samples.exists():
+        amendment = services.preview_amendment(exp, reassign=request.GET.get("reassign") == "1")
     return render(request, "planner/experiment_detail.html", {
         "exp": exp, "pools": pools, "unassigned": unassigned, "problems": problems,
-        "run": runs.first(), "open_runs": SequencingRun.objects.filter(status=SequencingRun.Status.PLANNING),
+        "run": services.current_run(exp), "amendment": amendment,
+        "pending_signoff": exp.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.AMENDMENT).first(),
+        "open_runs": SequencingRun.objects.filter(status=SequencingRun.Status.PLANNING),
         "n_samples": exp.samples.count(),
         "signoffs": exp.signoffs.select_related("submitted_by", "decided_by"),
         "deviations": exp.deviations.select_related("created_by"),
@@ -134,6 +138,17 @@ def experiment_action(request, pk, action):
     if action == "accept":
         services.accept_experiment(exp, request.user, comment)
         messages.success(request, "Experiment accepted.")
+    elif action == "reopen":
+        services.reopen_experiment(exp, request.user, request.POST.get("reason", ""))
+        messages.success(request, "Plan reopened for amendment. The other experiments of the run are not affected.")
+    elif action == "submit_amendment":
+        services.submit_amendment(exp, request.user, request.POST.get("reassign") == "on", comment)
+        messages.success(request, "Amendment passed all run checks and was submitted. A second person must approve it.")
+    elif action in ("approve_amendment", "reject_amendment"):
+        so = get_object_or_404(SignOff, pk=request.POST.get("signoff"), experiment=exp, step=SignOff.Step.AMENDMENT)
+        services.decide_amendment(so, request.user, action == "approve_amendment", comment)
+        messages.success(request, "Amendment approved — library prep can start." if action == "approve_amendment"
+                         else "Amendment rejected — the plan is open for changes again.")
     elif action == "add_to_run":
         run = get_object_or_404(SequencingRun, pk=request.POST.get("run"))
         services.add_experiment_to_run(run, exp)
@@ -241,6 +256,9 @@ def run_detail(request, pk):
         "pending_signoff": run.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.RUN_PLAN).first(),
         "plan_problems": services.final_plan_problems(run) if run.status == SequencingRun.Status.PLANNING else [],
         "libprep_done": done, "libprep_open": open_,
+        "amendments": run.amendments.all(),
+        "pending_amendments": run.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.AMENDMENT)
+        .select_related("experiment", "submitted_by"),
     })
 
 
@@ -304,8 +322,8 @@ def run_action(request, pk, action):
 @login_required
 def run_download(request, pk, kind):
     run = get_object_or_404(SequencingRun, pk=pk)
-    draft = "" if run.status in (SequencingRun.Status.APPROVED, SequencingRun.Status.SUBMITTED,
-                                 SequencingRun.Status.DATA_DELIVERED) else "DRAFT_"
+    final = run.status in (SequencingRun.Status.APPROVED, SequencingRun.Status.SUBMITTED, SequencingRun.Status.DATA_DELIVERED)
+    draft = "" if final and not run.amendments.exists() else "DRAFT_"
     if kind == "samplesheet":
         return _download(exports.illumina_samplesheet_v2(run), f"{draft}{run.run_id}_SampleSheet.csv")
     if kind == "provider":

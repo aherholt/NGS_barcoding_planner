@@ -1,7 +1,7 @@
 # Dependencies live in requirements.txt / requirements-dev.txt (pinned).
 [project]
 name = "ngs-barcoding-planner"
-version = "0.2.0"
+version = "0.3.0"
 description = "Plan and record Tag&Pool well barcodes, pools, sample indexes and NGS runs — with audit trail and 4-eyes sign-off."
 requires-python = ">=3.11"
 

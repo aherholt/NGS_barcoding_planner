@@ -361,7 +361,7 @@ def change_hold_status(experiment: Experiment, user, target: str, reason: str):
     """Put on hold / cancel / resume. Not possible while the experiment is in a sequencing run."""
     if not reason.strip():
         raise PlannerError("A reason is required.")
-    if experiment.pools.filter(run_links__isnull=False).exists():
+    if experiment.pools.filter(run_links__isnull=False).exists() or experiment.amendment_run_id:
         raise PlannerError("The experiment is in a sequencing run. Remove it from the run first "
                            "(possible while the run is in planning).")
     if target == Experiment.Status.SUBMITTED and experiment.status not in (Experiment.Status.ON_HOLD, Experiment.Status.CANCELLED):
@@ -478,6 +478,10 @@ def assign_indexes(run: SequencingRun, index_set: IndexSet, overwrite: bool = Fa
     Hamming distance to the libraries already placed. Always review the run checks afterwards.
     """
     _check_run_unlocked(run)
+    return _assign_missing_indexes(run, index_set, overwrite)
+
+
+def _assign_missing_indexes(run: SequencingRun, index_set: IndexSet, overwrite: bool = False) -> int:
     n7, n5 = run.i7_length or 0, run.i5_length or 0
     i7s = [p for p in index_set.primers.filter(kind="i7") if len(p.sequence) >= n7]
     i5s = [p for p in index_set.primers.filter(kind="i5") if len(p.sequence) >= n5] if n5 else [None]
@@ -574,6 +578,8 @@ def reopen_run(run: SequencingRun, user, reason: str):
         raise PlannerError("A reason is required.")
     if run.status not in (SequencingRun.Status.IN_REVIEW, SequencingRun.Status.APPROVED):
         raise PlannerError("Only runs in review or approved can be reopened.")
+    if run.amendments.exists():
+        raise PlannerError("Finish or reject the open experiment amendment(s) first.")
     started = [e.code for e in run.experiments() if e.status != Experiment.Status.PLAN_APPROVED
                and e.status != Experiment.Status.PLAN_IN_REVIEW]
     if started:
@@ -588,7 +594,7 @@ def reopen_run(run: SequencingRun, user, reason: str):
 
 
 def libprep_progress(run: SequencingRun) -> tuple[list[Experiment], list[Experiment]]:
-    exps = list(run.experiments().order_by("code"))
+    exps = sorted(set(run.experiments()) | set(run.amendments.all()), key=lambda e: e.code)
     done = [e for e in exps if e.status in (Experiment.Status.LIBPREP_DONE, Experiment.Status.SUBMITTED_TO_PROVIDER,
                                             Experiment.Status.DATA_DELIVERED)]
     return done, [e for e in exps if e not in done]
@@ -598,6 +604,9 @@ def libprep_progress(run: SequencingRun) -> tuple[list[Experiment], list[Experim
 def mark_run_submitted(run: SequencingRun, user):
     if run.status != SequencingRun.Status.APPROVED:
         raise PlannerError("Approve the final plan first.")
+    if run.amendments.exists():
+        raise PlannerError("Open amendment(s): " + ", ".join(e.code for e in run.amendments.all())
+                           + " — they must be approved before the run is submitted.")
     _, open_ = libprep_progress(run)
     if open_:
         raise PlannerError(f"Library prep not yet recorded for: {', '.join(e.code for e in open_)}.")
@@ -617,3 +626,110 @@ def mark_data_delivered(run: SequencingRun, user, comment: str = ""):
     run.status = SequencingRun.Status.DATA_DELIVERED
     run.save()
     _set_run_experiments_status(run, Experiment.Status.DATA_DELIVERED)
+
+
+# --------------------------------------------------------------------------- #
+# Amendments: change ONE experiment inside an approved run
+#
+# Other experiments of the run keep their approval and their library prep can continue.
+#   reopen_experiment   Plan approved → Plan reopened – amendment
+#                       (pools leave the run; their sample indexes are kept; plan becomes editable)
+#   submit_amendment    pools re-join the run, missing indexes are assigned, ALL run checks
+#                       (index uniqueness/distance across the entire run …) must pass → 4-eyes review
+#   decide_amendment    approve → Plan approved again; reject → back to amendment
+# --------------------------------------------------------------------------- #
+def current_run(experiment: Experiment) -> SequencingRun | None:
+    return experiment.amendment_run or SequencingRun.objects.filter(run_pools__pool__experiment=experiment).first()
+
+
+@transaction.atomic
+def reopen_experiment(experiment: Experiment, user, reason: str):
+    if not reason.strip():
+        raise PlannerError("A reason is required.")
+    run = current_run(experiment)
+    if experiment.status != Experiment.Status.PLAN_APPROVED or run is None or run.status != SequencingRun.Status.APPROVED:
+        raise PlannerError("Only experiments with an approved plan whose library prep has not been recorded can be "
+                           "reopened. If library prep is already done, record a deviation instead.")
+    Deviation.objects.create(experiment=experiment, run=run, created_by=user,
+                             description=f"Plan of {experiment.code} reopened for amendment in run {run.run_id}: {reason}")
+    RunPool.objects.filter(run=run, pool__experiment=experiment).delete()
+    experiment.amendment_run = run
+    set_status(experiment, Experiment.Status.AMENDING)
+
+
+def _run_index_set(run: SequencingRun) -> IndexSet | None:
+    pool = Pool.objects.filter(run_links__run=run, i7__isnull=False).select_related("i7__index_set").first()
+    return pool.i7.index_set if pool else None
+
+
+def _relink_amendment(experiment: Experiment, reassign: bool = False) -> SequencingRun:
+    """Put the amended experiment's pools back into its run and fill in missing indexes."""
+    run = experiment.amendment_run
+    problems = validate_plan(experiment)
+    if not experiment.pools.exists():
+        problems.append("No pools/libraries.")
+    if problems:
+        raise PlannerError(problems)
+    index_set = _run_index_set(run)
+    pools = list(experiment.pools.all())
+    if reassign:
+        for p in pools:
+            p.i7 = p.i5 = None
+            p.save()
+    total = sum(max(p.samples.count(), 1) for p in pools)
+    for p in pools:
+        RunPool.objects.create(run=run, pool=p, target_m_read_pairs=round(
+            (experiment.requested_m_read_pairs or 0) * max(p.samples.count(), 1) / total, 1))
+    if any(p.i7_id is None for p in experiment.pools.all()):
+        if index_set is None:
+            raise PlannerError("Cannot assign indexes: no index set in use in this run.")
+        _assign_missing_indexes(run, index_set)
+    return run
+
+
+class _Rollback(Exception):
+    pass
+
+
+def preview_amendment(experiment: Experiment, reassign: bool = False) -> dict:
+    """Dry run of submit_amendment: what the indexes and run checks WOULD be. Changes nothing."""
+    result = {"problems": [], "issues": [], "libraries": []}
+    try:
+        with transaction.atomic():
+            run = _relink_amendment(experiment, reassign)
+            result["issues"] = check_run(run)
+            result["problems"] = final_plan_problems(run)
+            result["libraries"] = [(p.pool_id, p.i7, p.i5) for p in experiment.pools.select_related("i7", "i5")]
+            raise _Rollback
+    except _Rollback:
+        pass
+    except PlannerError as e:
+        result["problems"] = e.problems
+    return result
+
+
+@transaction.atomic
+def submit_amendment(experiment: Experiment, user, reassign: bool = False, comment: str = "") -> SignOff:
+    if experiment.status != Experiment.Status.AMENDING:
+        raise PlannerError("The experiment is not being amended.")
+    run = _relink_amendment(experiment, reassign)
+    problems = final_plan_problems(run)
+    if problems:
+        raise PlannerError(["Run checks fail with the amended plan (nothing was saved):"] + problems)
+    snap = final_plan_snapshot(run)
+    so = SignOff.objects.create(experiment=experiment, run=run, step=SignOff.Step.AMENDMENT, submitted_by=user,
+                                comment=comment, snapshot=snap, snapshot_hash=_hash(snap))
+    set_status(experiment, Experiment.Status.PLAN_IN_REVIEW)
+    return so
+
+
+@transaction.atomic
+def decide_amendment(signoff: SignOff, user, approve: bool, comment: str = ""):
+    exp, run = signoff.experiment, signoff.run
+    _decide(signoff, user, approve, comment, final_plan_snapshot(run))
+    if approve:
+        exp.amendment_run = None
+        set_status(exp, Experiment.Status.PLAN_APPROVED)
+    else:
+        RunPool.objects.filter(run=run, pool__experiment=exp).delete()
+        set_status(exp, Experiment.Status.AMENDING)

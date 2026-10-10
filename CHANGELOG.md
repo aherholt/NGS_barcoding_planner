@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 – 2026-10-10
+- Excel sample-list template: download per experiment (pre-filled with current samples, barcode drop-down
+  from the experiment's set) or generic (`/sample-template/`, `data/templates/sample_list_template.xlsx`);
+  sheets Samples / Instructions; drop-downs for plate format and wells, duplicate-ID check, text columns.
+- Upload reads the sheet named "Samples" regardless of sheet order.
+
 ## 0.4.0 – 2026-10-10
 Visual planning with drag & drop.
 - Sample list: new optional column `plate_format` (6/12/24/48/96-well, default 24); wells validated per

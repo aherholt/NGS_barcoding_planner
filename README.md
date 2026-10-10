@@ -139,7 +139,22 @@ Open <http://127.0.0.1:8000> and walk through one experiment:
 
 To start again from scratch: stop the server (Ctrl+C), `Remove-Item db.sqlite3`, repeat step 3.
 
-## 4. Load your real reference data
+## 4. Sample lists
+
+Each experiment's Overview tab has a **⬇ Excel template** link next to "Upload sample list". The file:
+
+* sheet **Samples** — the columns the upload expects (`sample_id`, `source_plate`, `source_well`,
+  `plate_format`, `condition`; for Tag&Pool also the optional `pool_id`/`barcode_id` to import a ready-made
+  plan). Required columns are red, optional blue, plan columns grey; hover a header for its explanation.
+  Drop-downs for plate format, wells and (Tag&Pool) the experiment's barcode IDs; duplicate sample IDs are flagged.
+* sheet **Instructions** — what every column means, allowed values, plate formats.
+* if the experiment already has samples, they are **pre-filled** — download, edit, upload again.
+
+Fill it in, save, and upload it. The upload reads the sheet named "Samples" (the order of the sheets
+does not matter) and lists all problems at once. A blank generic template is at `/sample-template/` and in
+`data/templates/sample_list_template.xlsx`; a CSV with the same columns works too.
+
+## 5. Load your real reference data
 
 1. **Well barcodes** – export your Excel sheet with columns `barcode_id, well, sequence`
    (`well` = position in the 96-well barcode stock plate, must match the STAR deck file):
@@ -162,7 +177,7 @@ in use cannot be edited, so old experiments stay reproducible.
 > "i5 reverse complement" flips them in the sample sheet. Ask the provider which orientation they want
 > for NovaSeq X, and check the first run's demultiplexing report.
 
-## 5. Files the app produces
+## 6. Files the app produces
 
 | File | For | Content |
 |---|---|---|
@@ -175,14 +190,14 @@ in use cannot be edited, so old experiments stay reproducible.
 
 Files from plans that are not yet approved are prefixed `DRAFT_`.
 
-## 6. Going live
+## 7. Going live
 
 * Server deployment with Docker + PostgreSQL: `docs/DEPLOYMENT.md`
 * SharePoint sync and email notifications: `docs/SHAREPOINT_SYNC.md`
 * Microsoft login: `docs/SETUP_ENTRA_ID.md`
 * What still needs a decision: `docs/OPEN_POINTS.md`
 
-## 7. Code map (for you or an AI coding agent)
+## 8. Code map (for you or an AI coding agent)
 
 | File | What it does |
 |---|---|
@@ -190,6 +205,7 @@ Files from plans that are not yet approved are prefixed `DRAFT_`.
 | `planner/services.py` | all rules: planning, locking, 4-eyes, run assignment, index assignment |
 | `planner/checks.py` | run checks, pure Python |
 | `planner/exports.py` | all file exports |
+| `planner/sample_template.py` | Excel sample-list template |
 | `planner/sharepoint.py` | Microsoft Graph sync |
 | `planner/views.py`, `templates/` | web pages |
 | `config/settings.py` | settings; lab-specific values in `PLANNER = {...}` |

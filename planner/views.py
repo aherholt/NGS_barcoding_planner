@@ -195,6 +195,20 @@ def experiment_download(request, pk, kind):
     return redirect(exp)
 
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@login_required
+def sample_template(request, pk=None):
+    """Excel template for the sample list; per experiment it is pre-filled with the current samples."""
+    from .sample_template import build
+    exp = get_object_or_404(Experiment, pk=pk) if pk else None
+    resp = HttpResponse(build(exp), content_type=XLSX)
+    name = f"{exp.code}_sample_list.xlsx" if exp else "sample_list_template.xlsx"
+    resp["Content-Disposition"] = f'attachment; filename="{name}"'
+    return resp
+
+
 @login_required
 def experiment_history(request, pk):
     exp = get_object_or_404(Experiment, pk=pk)

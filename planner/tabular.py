@@ -12,7 +12,10 @@ def read_table(data: bytes, filename: str, sheet: str | None = None) -> list[dic
     if Path(filename).suffix.lower() in (".xlsx", ".xlsm"):
         from openpyxl import load_workbook
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        ws = wb[sheet] if sheet else wb.worksheets[0]
+        if sheet:
+            ws = wb[sheet]
+        else:  # the template's data sheet is called "Samples"; otherwise use the first sheet
+            ws = next((w for w in wb.worksheets if w.title.strip().lower() == "samples"), wb.worksheets[0])
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             return []

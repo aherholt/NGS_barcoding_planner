@@ -93,7 +93,9 @@
     {% if not exp.plan_locked %}
     <div class="grid" style="margin-bottom:12px">
       <form method="post" enctype="multipart/form-data" action="{% url 'experiment_upload' exp.pk %}">{% csrf_token %}
-        <b>Upload sample list</b><br>{{ upload_form.file }}<div class="help">{{ upload_form.file.help_text }}</div>
+        <b>Upload sample list</b>
+        <a href="{% url 'experiment_sample_template' exp.pk %}" style="margin-left:8px">⬇ Excel template{% if n_samples %} (with current samples){% endif %}</a><br>
+        {{ upload_form.file }}<div class="help">{{ upload_form.file.help_text }}</div>
         <p><button class="secondary">Upload (replaces current list)</button></p></form>
       {% if exp.is_tag_and_pool %}
       <form method="post" action="{% url 'experiment_plan' exp.pk %}">{% csrf_token %}

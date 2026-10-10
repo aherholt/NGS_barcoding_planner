@@ -38,7 +38,8 @@
         <div class="legend">{% for s in unassigned %}<span class="chip sample-tile" data-sample="{{ s.pk }}" {% if editable %}data-drag='{"kind":"sample","sample":{{ s.pk }}}'{% endif %}>{{ s.sample_id }}</span>{% endfor %}</div></div>
     {% endif %}
     {% if editable %}<div class="pool pool-drop" data-pool="new" style="text-align:center;color:var(--muted);border-style:dashed">+ new pool (drop a sample here)</div>{% endif %}
-    {% if not pools and not unassigned %}<p class="muted">No samples yet — upload a sample list on the Overview tab.</p>{% endif %}
+    {% if not pools and not unassigned %}<p class="muted">No samples yet — fill in the <a href="{% url 'experiment_sample_template' exp.pk %}">Excel template</a>
+      and upload it on the Overview tab.</p>{% endif %}
   </div>
 </div>
 <div>

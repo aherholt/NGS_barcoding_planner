@@ -15,6 +15,7 @@
 <div>
   <div class="card">
     <h2>Next step</h2>
+    {% include "planner/_next_owner.html" %}
     <ol class="steps">
       <li class="{% if run.status == 'planning' %}now{% else %}done{% endif %}">Add experiments &amp; distribute indexes</li>
       <li class="{% if run.status == 'in_review' %}now{% elif run.status != 'planning' %}done{% endif %}">Final plan approved (4-eyes)</li>
@@ -40,6 +41,7 @@
         then everything is locked and library prep can start.
         {% if plan_problems %}{% for p in plan_problems %}<div class="issue error">{{ p }}</div>{% endfor %}{% endif %}
         <div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
+        {% include "planner/_handover.html" with label="Approval by (a second person)" none_label="— anyone except me —" %}
         <p><button {% if plan_problems %}disabled title="fix the problems listed above first"{% endif %}>Submit final plan for approval</button></p></form>
     {% elif run.status == "in_review" and pending_signoff %}
       <p>Final plan submitted by <b>{{ pending_signoff.submitted_by }}</b> on {{ pending_signoff.submitted_at|date:"Y-m-d H:i" }}.
@@ -49,6 +51,7 @@
       {% else %}
       <form method="post" action="{% url 'run_action' run.pk 'approve' %}">{% csrf_token %}
         <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
+        {% include "planner/_handover.html" with label="If approved: library prep by" auto_label="each experiment's responsible person (library prep)" %}
         <p class="actions"><button>Approve final plan</button>
           <button class="danger" formaction="{% url 'run_action' run.pk 'reject' %}">Reject</button></p></form>
       {% endif %}
@@ -61,8 +64,10 @@
       {% for so in pending_amendments %}<div class="issue info">Amendment of <a href="{{ so.experiment.get_absolute_url }}">{{ so.experiment.code }}</a>
         waiting for approval (submitted by {{ so.submitted_by }}) — approve on the experiment page.</div>{% endfor %}
       <table>{% for e in libprep_done %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge ok">Library prep done</span></td></tr>{% endfor %}
-        {% for e in libprep_open %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge warn">waiting</span></td></tr>{% endfor %}</table>
+        {% for e in libprep_open %}<tr><td><a href="{{ e.get_absolute_url }}">{{ e.code }}</a></td><td><span class="badge warn">waiting</span>
+          {% if e.assignee %} · 👤 {{ e.assignee.get_full_name|default:e.assignee.username }}{% endif %}</td></tr>{% endfor %}</table>
       <form method="post" action="{% url 'run_action' run.pk 'submitted' %}">{% csrf_token %}
+        {% include "planner/_handover.html" with label="Then: record data delivery by" default=user %}
         <p><button {% if libprep_open or amendments %}disabled title="library prep of all experiments must be recorded and amendments approved first"{% endif %}>Mark as submitted to provider</button></p></form>
     {% elif run.status == "submitted" %}
       <form method="post" action="{% url 'run_action' run.pk 'delivered' %}">{% csrf_token %}{{ comment_form.comment }}

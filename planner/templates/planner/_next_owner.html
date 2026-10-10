@@ -1,0 +1,12 @@
+{% if next_label %}
+<div class="next-owner">
+  <span><b>Next:</b> {{ next_label }}</span>
+  <span>· 👤 {% if next_owner %}<b>{{ next_owner.get_full_name|default:next_owner.username }}</b>{% if next_owner.pk == user.pk %} <span class="badge warn">you</span>{% endif %}{% else %}<span class="muted">not assigned</span>{% endif %}</span>
+  {% if can_assign %}
+  <details class="inline-details"><summary>change</summary>
+    <form method="post" action="{{ assign_url }}" class="actions" style="margin-top:4px">{% csrf_token %}
+      {% include "planner/_handover.html" with label="Responsible for the next step" default=next_owner %}
+      <button class="secondary">Save</button></form></details>
+  {% endif %}
+</div>
+{% endif %}

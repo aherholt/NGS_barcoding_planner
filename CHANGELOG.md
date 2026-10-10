@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 – 2026-10-10
+Hand-over of the next step to a person.
+- Every workflow step (accept, final-plan submission/approval, library prep, run submission, amendment)
+  has a "hand over to" choice with defaults (responsible persons from SharePoint, the submitter after a
+  rejection, …); approvers cannot be the submitter.
+- "Next: … · 👤 name" on experiment and run pages (changeable), column "Next step · responsible" in the
+  experiment list, "My tasks" on the overview page. New requests default to the NGS organiser.
+- SharePoint write-back of `Next step`, `Next step owner` (e-mail) and `Next step owner name`; Power Automate
+  flow described in docs/SHAREPOINT_SYNC.md (e-mail to the next step owner).
+- Migration 0005 (assignee on experiments and runs; recorded in the audit trail).
+
 ## 0.4.1 – 2026-10-10
 - Excel sample-list template: download per experiment (pre-filled with current samples, barcode drop-down
   from the experiment's set) or generic (`/sample-template/`, `data/templates/sample_list_template.xlsx`);

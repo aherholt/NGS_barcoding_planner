@@ -73,6 +73,13 @@ Rules that enforce the order:
   recorded. While an amendment is open, run downloads are drafts and the run cannot be submitted.
 * The run can be marked "submitted to provider" only when library prep of all its experiments is recorded.
 
+**Hand-over:** every step form has a field "Hand over … to" (pre-filled with a sensible default, e.g. the
+experiment's responsible person for library prep). The person appears next to the next step
+("Next: … · 👤 name"), in the experiment list and in **My tasks** on the overview page, and can be changed
+any time ("change"). With SharePoint sync active, the app writes *Next step* and *Next step owner* (e-mail)
+into the list item and Power Automate e-mails that person (see `docs/SHAREPOINT_SYNC.md`). The approver of a
+4-eyes step can never be the person who submitted it.
+
 Non-Tag&Pool experiments (bulk RNA-seq, snRNA-seq, CRISPR screens) follow the same path; step 3 is just
 the sample-list upload (each sample becomes one indexed library).
 

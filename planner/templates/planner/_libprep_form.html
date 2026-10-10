@@ -2,5 +2,6 @@
   {% if exp.is_tag_and_pool %}<div class="field">{{ libprep_form.manifest.label_tag }} {{ libprep_form.manifest }}
     <div class="help">{{ libprep_form.manifest.help_text }}</div></div>{% endif %}
   <div class="field">{{ libprep_form.comment.label_tag }} {{ libprep_form.comment }}</div>
+  {% if run %}{% include "planner/_handover.html" with label="Then: submit run to provider by" default=run.assignee %}{% endif %}
   <button {% if not n_samples %}disabled{% endif %}>Record library prep as done</button>
 </form>

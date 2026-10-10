@@ -53,6 +53,80 @@ def set_status(experiment: Experiment, status: str):
 
 
 # --------------------------------------------------------------------------- #
+# Hand-over: who does the next step?
+#
+# Every workflow step accepts `assignee`: a user, None (nobody in particular) or AUTO (sensible
+# default, e.g. the experiment's "Responsible person library prep" after acceptance).
+# Steps on the run (indexes, final approval, submission, data delivery) are owned by the run's
+# assignee; steps on the experiment (accept, planning, library prep, amendment) by the experiment's.
+# --------------------------------------------------------------------------- #
+AUTO = object()
+
+EXPERIMENT_LEVEL = {"submitted", "accepted", "plan_approved", "amending", "on_hold"}
+
+
+def _run_of(experiment: Experiment):
+    return experiment.amendment_run or SequencingRun.objects.filter(run_pools__pool__experiment=experiment).first()
+
+
+def _has_pending_amendment(experiment: Experiment) -> bool:
+    return experiment.signoffs.filter(step=SignOff.Step.AMENDMENT, state=SignOff.State.PENDING).exists()
+
+
+def next_step(experiment: Experiment) -> tuple[str, object]:
+    """(what has to happen next, who is responsible) for an experiment — shown in the app and sent to SharePoint."""
+    st = experiment.status
+    run = _run_of(experiment)
+    rid = f" (run {run.run_id})" if run else ""
+    if st == "plan_in_review" and _has_pending_amendment(experiment):
+        return "Approve amendment", experiment.assignee
+    labels = {
+        "submitted": "Accept experiment",
+        "accepted": "Plan samples/pools and add to an NGS run",
+        "in_run": f"Distribute sample indexes and submit final plan{rid}",
+        "plan_in_review": f"Approve final plan{rid}",
+        "plan_approved": "Library prep",
+        "amending": "Amend plan and submit amendment",
+        "libprep_done": f"Submit run to provider{rid}",
+        "submitted_to_provider": f"Record data delivery{rid}",
+        "on_hold": "Resume or cancel",
+    }
+    label = labels.get(st, "")
+    if not label:
+        return "", None
+    owner = experiment.assignee if (st in EXPERIMENT_LEVEL or run is None) else run.assignee
+    if st == "submitted" and owner is None:
+        owner = experiment.responsible_ngs  # new requests: the NGS organiser accepts them
+    return label, owner
+
+
+def next_step_on_run(experiment: Experiment) -> bool:
+    """True if the experiment's next step is done on its run page (owned by the run's assignee)."""
+    return (experiment.status not in EXPERIMENT_LEVEL and _run_of(experiment) is not None
+            and not (experiment.status == "plan_in_review" and _has_pending_amendment(experiment)))
+
+
+def run_next_step(run: SequencingRun) -> str:
+    return {"planning": "Distribute sample indexes and submit final plan", "in_review": "Approve final plan",
+            "approved": "Library prep of all experiments, then submit to provider",
+            "submitted": "Record data delivery"}.get(run.status, "")
+
+
+def assign(target, user, by=None):
+    """Set who does the next step on an experiment or run (and tell SharePoint/Power Automate)."""
+    if getattr(target, "assignee_id", None) == (user.pk if user else None):
+        return
+    target.assignee = user
+    target.save()
+    from .sharepoint import push_experiment_safely
+    exps = [target] if isinstance(target, Experiment) else list(set(target.experiments()) | set(target.amendments.all()))
+    for e in exps:
+        type(e).objects.filter(pk=e.pk).update(sharepoint_push_pending=True)
+        e.refresh_from_db()
+        push_experiment_safely(e)
+
+
+# --------------------------------------------------------------------------- #
 # Sample list upload
 # --------------------------------------------------------------------------- #
 SAMPLE_COLUMNS_REQUIRED = ["sample_id"]
@@ -339,12 +413,13 @@ def _hash(snapshot: dict) -> str:
 # the run approves well barcodes + indexes of all its experiments. Only then can lab work start.
 # --------------------------------------------------------------------------- #
 @transaction.atomic
-def accept_experiment(experiment: Experiment, user, comment: str = ""):
+def accept_experiment(experiment: Experiment, user, comment: str = "", assignee=AUTO):
     if experiment.status != Experiment.Status.SUBMITTED:
         raise PlannerError("Only submitted experiments can be accepted.")
     SignOff.objects.create(experiment=experiment, step=SignOff.Step.ACCEPT, state=SignOff.State.APPROVED,
                            submitted_by=user, decided_by=user, decided_at=timezone.now(), comment=comment)
     set_status(experiment, Experiment.Status.ACCEPTED)
+    assign(experiment, experiment.responsible_libprep if assignee is AUTO else assignee)
 
 
 def _decide(signoff: SignOff, user, approve: bool, comment: str, current_snapshot: dict):
@@ -378,7 +453,8 @@ def compare_manifest(experiment: Experiment, rows: list[dict]) -> list[str]:
 
 
 @transaction.atomic
-def record_libprep_done(experiment: Experiment, user, comment: str = "", manifest_rows: list[dict] | None = None) -> list[str]:
+def record_libprep_done(experiment: Experiment, user, comment: str = "", manifest_rows: list[dict] | None = None,
+                        assignee=AUTO) -> list[str]:
     """Library prep (well barcodes AND sample-index PCR) finished for this experiment."""
     if experiment.status != Experiment.Status.PLAN_APPROVED:
         raise PlannerError("Library prep can only be recorded after the final plan (barcodes + indexes) "
@@ -390,6 +466,10 @@ def record_libprep_done(experiment: Experiment, user, comment: str = "", manifes
     SignOff.objects.create(experiment=experiment, step=SignOff.Step.LIBPREP, state=SignOff.State.APPROVED,
                            submitted_by=user, decided_by=user, decided_at=timezone.now(), comment=comment)
     set_status(experiment, Experiment.Status.LIBPREP_DONE)
+    assign(experiment, None)
+    run = current_run(experiment)
+    if run is not None and assignee is not AUTO:
+        assign(run, assignee)  # who submits the run to the provider
     return diffs
 
 
@@ -435,7 +515,7 @@ def ready_for_run(experiment: Experiment) -> list[str]:
 
 
 @transaction.atomic
-def add_experiment_to_run(run: SequencingRun, experiment: Experiment):
+def add_experiment_to_run(run: SequencingRun, experiment: Experiment, assignee=AUTO):
     """Add all pools of a fully planned experiment; the requested reads are split by samples per pool."""
     _check_run_unlocked(run)
     if run.status != SequencingRun.Status.PLANNING:
@@ -454,6 +534,10 @@ def add_experiment_to_run(run: SequencingRun, experiment: Experiment):
         RunPool.objects.update_or_create(run=run, pool=p, defaults={
             "target_m_read_pairs": round((experiment.requested_m_read_pairs or 0) * share, 1)})
     set_status(experiment, Experiment.Status.IN_RUN)
+    if assignee is not AUTO:
+        assign(run, assignee)
+    elif run.assignee_id is None:
+        assign(run, experiment.responsible_ngs)
 
 
 @transaction.atomic
@@ -589,7 +673,7 @@ def final_plan_problems(run: SequencingRun) -> list[str]:
 
 
 @transaction.atomic
-def submit_run(run: SequencingRun, user, comment: str = "") -> SignOff:
+def submit_run(run: SequencingRun, user, comment: str = "", assignee=AUTO) -> SignOff:
     """Submit the final plan (well barcodes of all experiments + sample indexes) for 4-eyes review."""
     if run.status != SequencingRun.Status.PLANNING:
         raise PlannerError("Only runs in planning can be submitted for review.")
@@ -599,23 +683,32 @@ def submit_run(run: SequencingRun, user, comment: str = "") -> SignOff:
     snap = final_plan_snapshot(run)
     so = SignOff.objects.create(run=run, step=SignOff.Step.RUN_PLAN, submitted_by=user, comment=comment,
                                 snapshot=snap, snapshot_hash=_hash(snap))
+    if assignee is not AUTO and assignee is not None and assignee.pk == user.pk:
+        raise PlannerError("4-eyes principle: choose a different person to approve your plan.")
     run.status = SequencingRun.Status.IN_REVIEW
     run.save()
     _set_run_experiments_status(run, Experiment.Status.PLAN_IN_REVIEW)
+    assign(run, None if assignee is AUTO else assignee)  # reviewer (empty = any second person)
     return so
 
 
 @transaction.atomic
-def decide_run(signoff: SignOff, user, approve: bool, comment: str = ""):
+def decide_run(signoff: SignOff, user, approve: bool, comment: str = "", assignee=AUTO):
     run = signoff.run
     _decide(signoff, user, approve, comment, final_plan_snapshot(run))
     run.status = SequencingRun.Status.APPROVED if approve else SequencingRun.Status.PLANNING
     run.save()
     _set_run_experiments_status(run, Experiment.Status.PLAN_APPROVED if approve else Experiment.Status.IN_RUN)
+    if approve:  # library prep of each experiment; the run itself goes back to the person who planned it
+        for e in run.experiments():
+            assign(e, e.responsible_libprep if assignee is AUTO else assignee)
+        assign(run, signoff.submitted_by)
+    else:
+        assign(run, signoff.submitted_by if assignee is AUTO else assignee)
 
 
 @transaction.atomic
-def reopen_run(run: SequencingRun, user, reason: str):
+def reopen_run(run: SequencingRun, user, reason: str, assignee=AUTO):
     """Unlock the final plan. Only possible before any library prep of this run was recorded."""
     if not reason.strip():
         raise PlannerError("A reason is required.")
@@ -634,6 +727,7 @@ def reopen_run(run: SequencingRun, user, reason: str):
     run.status = SequencingRun.Status.PLANNING
     run.save()
     _set_run_experiments_status(run, Experiment.Status.IN_RUN)
+    assign(run, user if assignee is AUTO else assignee)
 
 
 def libprep_progress(run: SequencingRun) -> tuple[list[Experiment], list[Experiment]]:
@@ -644,7 +738,7 @@ def libprep_progress(run: SequencingRun) -> tuple[list[Experiment], list[Experim
 
 
 @transaction.atomic
-def mark_run_submitted(run: SequencingRun, user):
+def mark_run_submitted(run: SequencingRun, user, assignee=AUTO):
     if run.status != SequencingRun.Status.APPROVED:
         raise PlannerError("Approve the final plan first.")
     if run.amendments.exists():
@@ -658,6 +752,7 @@ def mark_run_submitted(run: SequencingRun, user):
         run.planned_submission_date = timezone.localdate()
     run.save()
     _set_run_experiments_status(run, Experiment.Status.SUBMITTED_TO_PROVIDER)
+    assign(run, user if assignee is AUTO else assignee)  # records the data delivery
 
 
 @transaction.atomic
@@ -669,6 +764,9 @@ def mark_data_delivered(run: SequencingRun, user, comment: str = ""):
     run.status = SequencingRun.Status.DATA_DELIVERED
     run.save()
     _set_run_experiments_status(run, Experiment.Status.DATA_DELIVERED)
+    assign(run, None)
+    for e in run.experiments():
+        assign(e, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -686,7 +784,7 @@ def current_run(experiment: Experiment) -> SequencingRun | None:
 
 
 @transaction.atomic
-def reopen_experiment(experiment: Experiment, user, reason: str):
+def reopen_experiment(experiment: Experiment, user, reason: str, assignee=AUTO):
     if not reason.strip():
         raise PlannerError("A reason is required.")
     run = current_run(experiment)
@@ -698,6 +796,7 @@ def reopen_experiment(experiment: Experiment, user, reason: str):
     RunPool.objects.filter(run=run, pool__experiment=experiment).delete()
     experiment.amendment_run = run
     set_status(experiment, Experiment.Status.AMENDING)
+    assign(experiment, user if assignee is AUTO else assignee)
 
 
 def _run_index_set(run: SequencingRun) -> IndexSet | None:
@@ -752,7 +851,7 @@ def preview_amendment(experiment: Experiment, reassign: bool = False) -> dict:
 
 
 @transaction.atomic
-def submit_amendment(experiment: Experiment, user, reassign: bool = False, comment: str = "") -> SignOff:
+def submit_amendment(experiment: Experiment, user, reassign: bool = False, comment: str = "", assignee=AUTO) -> SignOff:
     if experiment.status != Experiment.Status.AMENDING:
         raise PlannerError("The experiment is not being amended.")
     run = _relink_amendment(experiment, reassign)
@@ -762,20 +861,25 @@ def submit_amendment(experiment: Experiment, user, reassign: bool = False, comme
     snap = final_plan_snapshot(run)
     so = SignOff.objects.create(experiment=experiment, run=run, step=SignOff.Step.AMENDMENT, submitted_by=user,
                                 comment=comment, snapshot=snap, snapshot_hash=_hash(snap))
+    if assignee is not AUTO and assignee is not None and assignee.pk == user.pk:
+        raise PlannerError("4-eyes principle: choose a different person to approve the amendment.")
     set_status(experiment, Experiment.Status.PLAN_IN_REVIEW)
+    assign(experiment, None if assignee is AUTO else assignee)
     return so
 
 
 @transaction.atomic
-def decide_amendment(signoff: SignOff, user, approve: bool, comment: str = ""):
+def decide_amendment(signoff: SignOff, user, approve: bool, comment: str = "", assignee=AUTO):
     exp, run = signoff.experiment, signoff.run
     _decide(signoff, user, approve, comment, final_plan_snapshot(run))
     if approve:
         exp.amendment_run = None
         set_status(exp, Experiment.Status.PLAN_APPROVED)
+        assign(exp, exp.responsible_libprep if assignee is AUTO else assignee)
     else:
         RunPool.objects.filter(run=run, pool__experiment=exp).delete()
         set_status(exp, Experiment.Status.AMENDING)
+        assign(exp, signoff.submitted_by if assignee is AUTO else assignee)
 
 
 # --------------------------------------------------------------------------- #

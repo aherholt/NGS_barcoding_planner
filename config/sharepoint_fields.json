@@ -23,7 +23,10 @@
   "write_back": {
     "status": "Status",
     "run_id": "NGS_x0020_run_x0020_ID",
-    "submission_date": "Date_x0020_of_x0020_NGS_x0020_sample_x0020_submission"
+    "submission_date": "Date_x0020_of_x0020_NGS_x0020_sample_x0020_submission",
+    "next_step": "Next_x0020_step",
+    "next_step_owner_email": "Next_x0020_step_x0020_owner",
+    "next_step_owner_name": "Next_x0020_step_x0020_owner_x0020_name"
   },
   "library_type_choices": {
     "Tag&Pool": "tag_and_pool",

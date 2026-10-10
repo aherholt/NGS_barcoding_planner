@@ -1,0 +1,7 @@
+<div class="handover">👤 <label>{{ label }}</label>
+  <select name="assignee">
+    {% if auto_label %}<option value="auto" selected>{{ auto_label }}</option>{% endif %}
+    <option value="" {% if not auto_label and not default %}selected{% endif %}>{{ none_label|default:"— nobody in particular —" }}</option>
+    {% for u in planner_users %}<option value="{{ u.pk }}" {% if not auto_label and default and u.pk == default.pk %}selected{% endif %}>{{ u.get_full_name|default:u.username }}{% if u.pk == user.pk %} (me){% endif %}</option>{% endfor %}
+  </select>
+</div>

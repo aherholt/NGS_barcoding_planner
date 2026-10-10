@@ -17,3 +17,4 @@
 | 13 | Backup job and a tested restore | audit trail | IT |
 | 14 | Real library construct entered in the structure builder and saved as template per library type | schematic, well-barcode check | to do |
 | 15 | STAR protocol for culture-plate formats other than 24-well (planner already supports 6–96-well) | robot | later |
+| 16 | SharePoint columns `Next step`, `Next step owner`, `Next step owner name` + Power Automate flow update | hand-over e-mails | to do |

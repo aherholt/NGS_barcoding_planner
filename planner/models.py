@@ -208,6 +208,8 @@ class Experiment(models.Model):
                                       help_text="library structure P5 → P7: list of {type, label, length}")
 
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.SUBMITTED)
+    assignee = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                 related_name="+", help_text="person responsible for the next step of this experiment")
     sharepoint_push_pending = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
@@ -305,6 +307,8 @@ class SequencingRun(models.Model):
         help_text="Reverse-complement i5 in the sample sheet export. Ask your provider which orientation they expect.",
     )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
+    assignee = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                 related_name="+", help_text="person responsible for the next step of this run")
     notes = models.TextField(blank=True)
     created = models.DateTimeField(auto_now_add=True)
     history = HistoricalRecords()

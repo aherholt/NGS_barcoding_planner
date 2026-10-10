@@ -173,6 +173,14 @@ def push_experiment(experiment) -> None:
     run = (RunPool.objects.filter(pool__experiment=experiment).exclude(run__status="cancelled")
            .select_related("run").order_by("-run__created").first())
     fields = {wb["status"]: experiment.get_status_display()}
+    from .services import next_step
+    label, owner = next_step(experiment)
+    if wb.get("next_step"):
+        fields[wb["next_step"]] = label
+    if wb.get("next_step_owner_email"):
+        fields[wb["next_step_owner_email"]] = (owner.email if owner else "") or ""
+    if wb.get("next_step_owner_name"):
+        fields[wb["next_step_owner_name"]] = (owner.get_full_name() or owner.username) if owner else ""
     if run:
         fields[wb["run_id"]] = run.run.run_id
         if run.run.planned_submission_date and wb.get("submission_date"):

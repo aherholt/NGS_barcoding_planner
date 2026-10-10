@@ -3,6 +3,12 @@
 <h1>Overview</h1>
 <p class="sub">Open experiments and sequencing runs. Everything you do here is recorded in the audit trail.</p>
 
+<div class="card">
+  <h2>My tasks <span class="muted" style="font-weight:400">· steps handed over to you</span></h2>
+  {% for t in my_tasks %}<div style="margin:4px 0"><a href="{{ t.obj.get_absolute_url }}"><b>{{ t.name }}</b></a> · {{ t.label }}</div>
+  {% empty %}<p class="muted">Nothing assigned to you right now.</p>{% endfor %}
+</div>
+
 {% if pending %}
 <div class="card">
   <h2>Waiting for your approval (4-eyes)</h2>

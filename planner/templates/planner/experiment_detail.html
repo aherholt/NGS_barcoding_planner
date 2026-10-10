@@ -8,10 +8,12 @@
   <!-- ===== Workflow: the next step depends on the status ===== -->
   <div class="card">
     <h2>Next step</h2>
+    {% include "planner/_next_owner.html" %}
     {% include "planner/_workflow_steps.html" %}
     {% if exp.status == "submitted" %}
       <p>New request from the intake list. Check the details (read structure, reads, dates), then accept it.</p>
       <form method="post" action="{% url 'experiment_action' exp.pk 'accept' %}">{% csrf_token %}{{ comment_form.comment }}
+        {% include "planner/_handover.html" with label="Hand over planning to" default=exp.responsible_libprep %}
         <p><button>Accept experiment</button></p></form>
     {% elif exp.status == "accepted" %}
       <p>{% if exp.is_tag_and_pool %}Upload the sample list and create the pool &amp; well-barcode plan below.
@@ -41,6 +43,7 @@
       {% else %}
       <form method="post" action="{% url 'experiment_action' exp.pk 'approve_amendment' %}">{% csrf_token %}
         <input type="hidden" name="signoff" value="{{ pending_signoff.pk }}">{{ comment_form.comment }}
+        {% include "planner/_handover.html" with label="If approved: library prep by" default=exp.responsible_libprep %}
         <p class="actions"><button>Approve amendment</button>
           <button class="danger" formaction="{% url 'experiment_action' exp.pk 'reject_amendment' %}">Reject</button></p></form>
       {% endif %}
@@ -62,6 +65,7 @@
       <form method="post" action="{% url 'experiment_action' exp.pk 'submit_amendment' %}">{% csrf_token %}
         <label><input type="checkbox" name="reassign" {% if request.GET.reassign == "1" %}checked{% endif %}> assign new sample indexes for this experiment</label>
         <div class="field">Comment (optional)<br>{{ comment_form.comment }}</div>
+        {% include "planner/_handover.html" with label="Approval by (a second person)" none_label="— anyone except me —" %}
         <p><button {% if not amendment or amendment.problems %}disabled{% endif %}>Submit amendment for approval</button></p></form>
     {% elif exp.status == "plan_approved" %}
       <p>Final plan approved (run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a>) — <b>library prep can start</b>.
@@ -73,6 +77,7 @@
         <p class="help">Only this experiment is reopened; the other experiments of the run keep their approval and their library prep
           can continue. The change is re-checked across the entire run and needs 4-eyes approval again.</p>
         <form method="post" action="{% url 'experiment_action' exp.pk 'reopen' %}">{% csrf_token %}{{ reason_form.reason }}
+          {% include "planner/_handover.html" with label="Amendment by" default=user %}
           <p><button class="secondary">Reopen this experiment's plan</button></p></form></details>
     {% elif exp.status == "libprep_done" %}
       <p>Library prep done. Run <a href="{{ run.get_absolute_url }}">{{ run.run_id }}</a> is submitted to the provider when all its experiments are done.</p>

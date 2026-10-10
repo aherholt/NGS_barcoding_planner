@@ -71,6 +71,10 @@ def test_status_change_pushes(db, fake, users):
     sharepoint.pull()
     e = Experiment.objects.get(sharepoint_item_id=12)
     services.accept_experiment(e, users["bioinf"])
-    assert fake.patched[-1] == (12, {"Status": "Accepted – in planning"})
+    item_id, fields = fake.patched[-1]
+    assert item_id == 12 and fields["Status"] == "Accepted – in planning"
+    # next step + the person it was handed over to (default: responsible person library prep) → Power Automate email
+    assert fields["Next_x0020_step"] == "Plan samples/pools and add to an NGS run"
+    assert fields["Next_x0020_step_x0020_owner"] == "tina@example.org"
     e.refresh_from_db()
     assert e.sharepoint_push_pending is False

@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from . import exports, services
@@ -21,6 +22,17 @@ def _download(content: str, filename: str, content_type="text/csv"):
     resp = HttpResponse(content, content_type=f"{content_type}; charset=utf-8")
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
+
+
+def _assignee(request):
+    """Hand-over choice from a form: 'auto' (default rule), '' (nobody) or a user id."""
+    v = request.POST.get("assignee", "auto")
+    if v == "auto":
+        return services.AUTO
+    if v == "":
+        return None
+    from django.contrib.auth import get_user_model
+    return get_object_or_404(get_user_model(), pk=v, is_active=True)
 
 
 def handles_planner_errors(view):
@@ -40,14 +52,30 @@ def handles_planner_errors(view):
 @login_required
 def dashboard(request):
     exps = Experiment.objects.exclude(status__in=[Experiment.Status.DATA_DELIVERED, Experiment.Status.CANCELLED])
+    my_tasks = []
+    for e in exps.select_related("assignee"):
+        label, owner = services.next_step(e)
+        if label and owner and owner.pk == request.user.pk and not services.next_step_on_run(e):
+            my_tasks.append({"obj": e, "name": e.code, "label": label})
+    for r in SequencingRun.objects.filter(assignee=request.user).exclude(status__in=["data_delivered", "cancelled"]):
+        my_tasks.append({"obj": r, "name": f"Run {r.run_id}", "label": services.run_next_step(r)})
     pending = SignOff.objects.filter(state=SignOff.State.PENDING).exclude(submitted_by=request.user) \
         .select_related("experiment", "run", "submitted_by")
     return render(request, "planner/dashboard.html", {
         "experiments": exps.select_related("responsible_libprep", "responsible_ngs"),
         "runs": SequencingRun.objects.exclude(status__in=[SequencingRun.Status.DATA_DELIVERED, SequencingRun.Status.CANCELLED])
         .select_related("flowcell_type"),
-        "pending": pending,
+        "pending": pending, "my_tasks": my_tasks,
     })
+
+
+def _next_context(exp, request):
+    label, owner = services.next_step(exp)
+    run = services.current_run(exp)
+    run_level = services.next_step_on_run(exp)
+    return {"next_label": label, "next_owner": owner, "can_assign": bool(label),
+            "assign_url": reverse("run_action", args=[run.pk, "assign"]) if run_level
+            else reverse("experiment_action", args=[exp.pk, "assign"])}
 
 
 @login_required
@@ -87,6 +115,7 @@ def experiment_detail(request, pk):
     return render(request, "planner/experiment_detail.html", {
         "exp": exp, "pools": pools, "unassigned": unassigned, "problems": problems,
         "run": services.current_run(exp), "amendment": amendment,
+        **_next_context(exp, request),
         "pending_signoff": exp.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.AMENDMENT).first(),
         "open_runs": SequencingRun.objects.filter(status=SequencingRun.Status.PLANNING),
         "n_samples": exp.samples.count(),
@@ -136,19 +165,25 @@ def experiment_action(request, pk, action):
     exp = get_object_or_404(Experiment, pk=pk)
     comment = request.POST.get("comment", "")
     if action == "accept":
-        services.accept_experiment(exp, request.user, comment)
+        services.accept_experiment(exp, request.user, comment, assignee=_assignee(request))
         messages.success(request, "Experiment accepted.")
     elif action == "reopen":
-        services.reopen_experiment(exp, request.user, request.POST.get("reason", ""))
+        services.reopen_experiment(exp, request.user, request.POST.get("reason", ""), assignee=_assignee(request))
         messages.success(request, "Plan reopened for amendment. The other experiments of the run are not affected.")
     elif action == "submit_amendment":
-        services.submit_amendment(exp, request.user, request.POST.get("reassign") == "on", comment)
+        services.submit_amendment(exp, request.user, request.POST.get("reassign") == "on", comment,
+                                  assignee=_assignee(request))
         messages.success(request, "Amendment passed all run checks and was submitted. A second person must approve it.")
     elif action in ("approve_amendment", "reject_amendment"):
         so = get_object_or_404(SignOff, pk=request.POST.get("signoff"), experiment=exp, step=SignOff.Step.AMENDMENT)
-        services.decide_amendment(so, request.user, action == "approve_amendment", comment)
+        services.decide_amendment(so, request.user, action == "approve_amendment", comment,
+                                  assignee=_assignee(request) if action == "approve_amendment" else services.AUTO)
         messages.success(request, "Amendment approved — library prep can start." if action == "approve_amendment"
                          else "Amendment rejected — the plan is open for changes again.")
+    elif action == "assign":
+        a = _assignee(request)
+        services.assign(exp, None if a is services.AUTO else a)
+        messages.success(request, "Responsible person updated.")
     elif action == "add_to_run":
         run = get_object_or_404(SequencingRun, pk=request.POST.get("run"))
         services.add_experiment_to_run(run, exp)
@@ -159,7 +194,7 @@ def experiment_action(request, pk, action):
         if request.FILES.get("manifest"):
             f = request.FILES["manifest"]
             rows = read_table(f.read(), f.name)
-        diffs = services.record_libprep_done(exp, request.user, comment, rows)
+        diffs = services.record_libprep_done(exp, request.user, comment, rows, assignee=_assignee(request))
         if diffs:
             messages.warning(request, f"Recorded, but the robot manifest differs from the plan in {len(diffs)} places — saved as a deviation.")
         else:
@@ -269,6 +304,8 @@ def run_detail(request, pk):
         "deviations": run.deviations.select_related("created_by"),
         "pending_signoff": run.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.RUN_PLAN).first(),
         "plan_problems": services.final_plan_problems(run) if run.status == SequencingRun.Status.PLANNING else [],
+        "next_label": services.run_next_step(run), "next_owner": run.assignee, "can_assign": True,
+        "assign_url": reverse("run_action", args=[run.pk, "assign"]),
         "libprep_done": done, "libprep_open": open_,
         "amendments": run.amendments.all(),
         "pending_amendments": run.signoffs.filter(state=SignOff.State.PENDING, step=SignOff.Step.AMENDMENT)
@@ -281,7 +318,11 @@ def run_detail(request, pk):
 def run_action(request, pk, action):
     run = get_object_or_404(SequencingRun, pk=pk)
     comment = request.POST.get("comment", "")
-    if action == "add_experiment":
+    if action == "assign":
+        a = _assignee(request)
+        services.assign(run, None if a is services.AUTO else a)
+        messages.success(request, "Responsible person updated.")
+    elif action == "add_experiment":
         form = AddExperimentForm(request.POST, run=run)
         if not form.is_valid():
             raise PlannerError("Choose an experiment that is ready for sequencing.")
@@ -309,18 +350,19 @@ def run_action(request, pk, action):
         n = services.assign_indexes(run, form.cleaned_data["index_set"], form.cleaned_data["overwrite"])
         messages.success(request, f"Indexes assigned to {n} libraries.")
     elif action == "submit":
-        services.submit_run(run, request.user, comment)
+        services.submit_run(run, request.user, comment, assignee=_assignee(request))
         messages.success(request, "Final plan submitted. A second person must approve it before library prep starts.")
     elif action in ("approve", "reject"):
         so = get_object_or_404(SignOff, pk=request.POST.get("signoff"), run=run)
-        services.decide_run(so, request.user, action == "approve", comment)
+        services.decide_run(so, request.user, action == "approve", comment,
+                            assignee=_assignee(request) if action == "approve" else services.AUTO)
         messages.success(request, "Final plan approved — library prep can start." if action == "approve"
                          else "Final plan rejected and unlocked.")
     elif action == "reopen":
         services.reopen_run(run, request.user, request.POST.get("reason", ""))
         messages.success(request, "Final plan reopened.")
     elif action == "submitted":
-        services.mark_run_submitted(run, request.user)
+        services.mark_run_submitted(run, request.user, assignee=_assignee(request))
         messages.success(request, "Marked as submitted to the provider.")
     elif action == "delivered":
         services.mark_data_delivered(run, request.user, comment)

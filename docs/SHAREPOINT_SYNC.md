@@ -6,6 +6,7 @@
 |---|---|---|
 | Title, people, ELN links, dates, library type, read lengths, requested reads, product/insert length, complexity | SharePoint (scientist) | app (every 5 min) |
 | Status, NGS run ID, date of submission | app | SharePoint |
+| Next step, next step owner (e-mail + name) | app | SharePoint |
 
 Emails are sent by **Power Automate** when the **Status** column changes. The app never sends mail
 itself, so recipients and texts are maintained in one place.
@@ -20,6 +21,9 @@ itself, so recipients and texts are maintained in one place.
 | Status – Choice | choices exactly as the app labels: Submitted, Accepted – in planning, Assigned to NGS run, Final plan in review, Plan approved – ready for library prep, Plan reopened – amendment, Library prep done, Submitted to provider, Data delivered, On hold, Cancelled |
 | Sample number (per pool), Number of pools, Total | keep as planning estimates; the real pools live in the app |
 | new: Data delivery deadline – Date | used for run planning |
+| new: `Next step` – Single line of text | written by the app, e.g. "Approve final plan (run NGS26-007)" |
+| new: `Next step owner` – Single line of text | written by the app: **e-mail address** of the person the step was handed over to (Power Automate sends to it) |
+| new: `Next step owner name` – Single line of text | written by the app: display name (for list views) |
 
 ## 2. App registration (done once by an M365 admin)
 
@@ -62,19 +66,33 @@ retried on the next sync.
 
 ## 5. Power Automate flow (emails)
 
+Whenever someone finishes a step in the app, they choose who does the next step (with sensible
+defaults, e.g. "Responsible person library prep" after acceptance). The app writes **Status**,
+**Next step** and **Next step owner** (e-mail) into the list item. One flow sends the e-mail:
+
 1. Trigger: **When an item is created or modified** (your list).
 2. Action: **Get changes for an item or a file (properties only)** — Since: *Trigger Window Start Token*.
-3. Condition: `Has Column Changed: Status` is true. (Without this, every edit would send an email.)
-4. Switch on **Status**:
-   * Submitted → email Library prep + NGS orga
-   * Accepted – in planning → email scientist (Responsible Person_Assay) + Library prep
-   * Assigned to NGS run → email NGS orga (+ link to run ID)
-   * Final plan in review → email NGS orga + Library prep ("please approve")
-   * Plan approved – ready for library prep → email Library prep ("start library prep")
-   * Plan reopened – amendment → email Library prep + NGS orga ("do not start library prep of this experiment")
-   * Library prep done → email NGS orga
-   * Submitted to provider / Data delivered → email scientist (+ run ID)
-5. Enable versioning on the list (List settings → Versioning) — required for "Get changes".
+3. Condition (OR): `Has Column Changed: Status` is true **or** `Has Column Changed: Next step owner` is true.
+   (Without this, every edit would send an e-mail.)
+4. Condition: `Next step owner` is not empty.
+   * **Yes** → **Send an email (V2)**
+     * To: `Next step owner`
+     * Subject: `[NGS planner] @{triggerOutputs()?['body/Title']}: @{triggerOutputs()?['body/Next_x0020_step']}`
+     * Body: experiment title, Status, Next step, NGS run ID and a link to the app
+       (`https://<planner-host>/experiments/` — the list item ID is in the app as "SharePoint item #").
+   * **No** (nobody in particular, e.g. "anyone except me" for approvals) → optionally e-mail the
+     responsible persons / NGS orga as before.
+5. Optional extra e-mails on fixed milestones (Switch on Status), e.g. "Data delivered" → Responsible Person_Assay.
+6. Enable versioning on the list (List settings → Versioning) — required for "Get changes".
+
+Notes:
+* A run-level hand-over (e.g. "approve final plan of run X") is written to **every experiment item of that
+  run**, so the person gets one e-mail per experiment in the run. If you prefer one e-mail per run, add a
+  condition on "NGS run ID" in the flow or ask for a run-level list.
+* The e-mail address comes from the user account in the planner (from Microsoft login or from the
+  "Responsible Person" columns synced from SharePoint), so it matches the M365 address.
+* Without SharePoint sync (e.g. local beta installations) nobody is notified — the hand-over is then only
+  visible in the app ("My tasks" on the overview page, "Next: … · 👤 name" on each page).
 
 ## Not done yet
 

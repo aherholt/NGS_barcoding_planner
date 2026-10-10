@@ -19,3 +19,15 @@ def status_class(status: str, kind: str = "") -> str:
 @register.filter
 def get(d, key):
     return d.get(key) if hasattr(d, "get") else None
+
+
+@register.filter
+def next_step(experiment):
+    """(label, owner) of the experiment's next step."""
+    from planner.services import next_step as ns
+    return ns(experiment)
+
+
+@register.filter
+def person(user):
+    return (user.get_full_name() or user.username) if user else ""

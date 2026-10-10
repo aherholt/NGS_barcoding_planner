@@ -1,0 +1,8 @@
+<div class="actions" style="justify-content:space-between;align-items:center">
+  <div><h1>{{ exp.code }} · {{ exp.title }}</h1>
+    <div class="sub" style="margin-bottom:4px">{{ exp.get_library_type_display }} · {% include "planner/_status.html" with status=exp.status label=exp.get_status_display kind="experiment" %}
+      {% if exp.sharepoint_item_id %}· SharePoint item #{{ exp.sharepoint_item_id }}{% endif %}</div></div>
+  <div class="actions"><a class="btn secondary" href="{% url 'experiment_edit' exp.pk %}">Edit details</a>
+    <a class="btn secondary" href="{% url 'experiment_history' exp.pk %}">Audit trail</a></div>
+</div>
+{% include "planner/_exp_tabs.html" %}

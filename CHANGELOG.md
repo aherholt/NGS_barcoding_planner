@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 – 2026-10-10
+Visual planning with drag & drop.
+- Sample list: new optional column `plate_format` (6/12/24/48/96-well, default 24); wells validated per
+  format; warning when a Tag&Pool plan uses formats the STAR protocol does not support yet (only 24-well).
+- Experiment tab "Plates & well barcodes": culture plates, 96-well PCR plate(s) (same layout as the STAR
+  protocol, verified by a test against the simulation code), barcode stock plate, pools; drag & drop of
+  barcodes and samples (swap / move / new pool).
+- Experiment tab "Library structure": drag & drop builder of labelled segments P5 → P7, schematic with
+  read arrows and read coverage table, check of the well-barcode position against the barcode map,
+  templates per library type. Included in the plan fingerprint covered by the final approval.
+- Run tab "Sample-index grid": 12 × 18 i7 × i5 grid, drag & drop of pools (swap, remove), shared
+  rows/columns highlighted, live run checks; amendment pools movable in approved runs.
+- Plan fingerprints of existing approvals are unchanged (new fields only included when used).
+
 ## 0.3.0 – 2026-10-06
 Amendments: change one experiment inside an approved run.
 - "Reopen this experiment's plan" on the experiment page while its library prep has not been recorded;

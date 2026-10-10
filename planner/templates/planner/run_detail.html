@@ -9,6 +9,8 @@
   {% if not run.locked %}<a class="btn secondary" href="{% url 'run_edit' run.pk %}">Edit run settings</a>{% endif %}
 </div>
 
+{% include "planner/_run_tabs.html" %}
+
 <div class="two">
 <div>
   <div class="card">

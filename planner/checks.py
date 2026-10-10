@@ -150,7 +150,8 @@ def check_run(libs: list[Library], spec: RunSpec, cfg: dict) -> list[Issue]:
     shared_i5 = len(indexed) - len({keys(lib)[1] for lib in indexed}) if n5 else 0
     if shared_i7 or shared_i5:
         issues.append(Issue("warning", "index_hopping",
-                            f"Combinatorial indexing: {shared_i7} libraries share an i7 and {shared_i5} share an i5 with another library. "
+                            f"Combinatorial indexing: {shared_i7} librar{'y' if shared_i7 == 1 else 'ies'} share(s) an i7 and "
+                            f"{shared_i5} share(s) an i5 with another library. "
                             "Index hopping can misassign a small fraction of reads between them. Prefer unique i7 AND i5 per library where possible."))
 
     # 5. colour balance (2-channel) -----------------------------------------

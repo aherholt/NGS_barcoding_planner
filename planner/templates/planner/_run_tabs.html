@@ -1,0 +1,4 @@
+<nav class="tabs">
+  <a href="{% url 'run_detail' run.pk %}" class="{% if not tab %}on{% endif %}">Overview</a>
+  <a href="{% url 'run_indexes' run.pk %}" class="{% if tab == 'indexes' %}on{% endif %}">Sample-index grid</a>
+</nav>

@@ -1,0 +1,142 @@
+{% extends "planner/base.html" %}
+{% block title %}{{ exp.code }} library – NGS barcoding planner{% endblock %}
+{% block content %}
+{% include "planner/_exp_header.html" %}
+<style>
+  .palette { display:flex; flex-wrap:wrap; gap:6px; }
+  .palette .pblock { padding:6px 10px; border:1px solid #55606e; border-radius:4px; font-size:12px; font-weight:600; }
+  .track { display:flex; align-items:stretch; gap:0; min-height:86px; padding:8px; border:1px dashed #c8cdd5;
+           border-radius:6px; overflow-x:auto; background:#fbfcfd; }
+  .seg { position:relative; border:1px solid #55606e; border-radius:4px; padding:6px 6px 4px; margin-right:4px;
+         min-width:92px; display:flex; flex-direction:column; gap:3px; font-size:12px; }
+  .seg input { font-size:12px; padding:2px 4px; width:100%; }
+  .seg input.len { width:62px; }
+  .seg .grip { font-size:11px; color:#344054; cursor:grab; user-select:none; padding-right:16px; }
+  .seg .x { position:absolute; top:1px; right:3px; border:0; background:none; color:#55606e; padding:0 2px; cursor:pointer; font-size:14px; }
+  .seg.over { outline:3px dashed var(--accent); }
+  .seg.over::before { content:""; position:absolute; left:-5px; top:0; bottom:0; width:3px; background:var(--accent); }
+  .endzone { min-width:70px; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px;
+             border:1px dashed #c8cdd5; border-radius:4px; }
+  .trash { display:inline-block; padding:8px 14px; border:1px dashed var(--err); color:var(--err); border-radius:6px; }
+</style>
+
+<div class="card">
+  <h2>Build the library product (P5 → P7)</h2>
+  {% if editable %}
+  <p class="help">Drag blocks from the palette into the product (drop onto a block = insert before it, onto “end” = append).
+    Drag a block by its <b>⠿ move</b> handle to reorder it, or onto the bin to remove it. Edit label and length directly; leave the insert length empty
+    to use the experiment's average insert length. The schematic and read coverage below update immediately; click <b>Save</b> to keep it.</p>
+  <div class="palette" id="palette">
+    {% for t in segment_types %}<span class="pblock" style="background:{{ t.colour }}" data-drag='{"kind":"palette","type":"{{ t.type }}"}'>{{ t.label }}</span>{% endfor %}
+  </div>
+  {% else %}<div class="issue info">🔒 View only — the plan is locked ({{ exp.get_status_display }}).</div>{% endif %}
+  <div style="margin:12px 0" class="track" id="track"></div>
+  {% if editable %}
+  <div class="actions" style="align-items:center">
+    <span class="trash" id="trash">🗑 drop here to remove</span>
+    <button id="save">Save</button>
+    <button class="secondary" id="load-template">Load template for {{ exp.get_library_type_display }}</button>
+    <button class="secondary" id="save-template">Save as template for {{ exp.get_library_type_display }}</button>
+    <span class="help" id="state">{% if saved %}Saved structure of this experiment.{% else %}Not saved yet — started from the template.{% endif %}</span>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Schematic and sequencing reads <span class="muted" style="font-weight:400">· R1 {{ exp.r1_length|default:"?" }} · i7 {{ exp.i7_length|default:"?" }} · i5 {{ exp.i5_length|default:"?" }} · R2 {{ exp.r2_length|default:"?" }} cycles</span></h2>
+  <div id="analysis">{{ analysis_html|safe }}</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const TYPES = {{ segment_types_json|safe }};
+  const editable = {{ editable|yesno:"true,false" }};
+  let layout = {{ layout_json|safe }};
+  const track = document.getElementById("track");
+  const base = "{% url 'experiment_library_api' exp.pk 'preview' %}".replace(/preview\/$/, "");
+  let timer = null;
+
+  function refresh() {
+    clearTimeout(timer);
+    timer = setTimeout(async function () {
+      const res = await DnD.post(base + "preview/", {layout: layout});
+      if (res.ok) document.getElementById("analysis").innerHTML = res.html;
+      else DnD.flash(res.errors, "error");
+    }, 250);
+    const st = document.getElementById("state");
+    if (st) st.textContent = "Unsaved changes.";
+  }
+
+  function render() {
+    track.innerHTML = "";
+    layout.forEach(function (seg, i) {
+      const el = document.createElement("div");
+      el.className = "seg";
+      el.style.background = TYPES[seg.type].colour;
+      el.dataset.index = i;
+      if (editable) {
+        el.innerHTML = '<span class="grip" title="drag to move">⠿ move</span><button class="x" title="remove">×</button>' +
+          '<input class="lab" value="">' +
+          '<label style="font-size:11px">bp <input class="len" type="number" min="1" max="5000" value=""></label>';
+        el.querySelector(".lab").value = seg.label;
+        el.querySelector(".len").value = seg.length == null ? "" : seg.length;
+        el.querySelector(".len").placeholder = seg.type === "insert" ? "avg" : "";
+        el.querySelector(".lab").addEventListener("change", function (e) { seg.label = e.target.value; refresh(); });
+        el.querySelector(".len").addEventListener("change", function (e) {
+          seg.length = e.target.value === "" ? null : parseInt(e.target.value, 10); refresh();
+        });
+        el.querySelector(".x").addEventListener("click", function () { layout.splice(i, 1); render(); refresh(); });
+        el.querySelector(".grip").dataset.drag = JSON.stringify({kind: "seg", index: i});
+      } else {
+        el.innerHTML = "<b></b><span></span>";
+        el.querySelector("b").textContent = seg.label;
+        el.querySelector("span").textContent = (seg.length == null ? "~avg" : seg.length) + " bp";
+      }
+      track.appendChild(el);
+    });
+    if (editable) {
+      const end = document.createElement("div");
+      end.className = "endzone";
+      end.dataset.index = layout.length;
+      end.textContent = "end";
+      track.appendChild(end);
+      DnD.draggables("#track .grip");
+      DnD.dropzones("#track .seg, #track .endzone", ["palette", "seg"], function (p, zone) {
+        let to = parseInt(zone.dataset.index, 10);
+        if (p.kind === "palette") {
+          const t = TYPES[p.type];
+          layout.splice(to, 0, {type: p.type, label: t.label, length: t.length});
+        } else {
+          const from = p.index;
+          const [seg] = layout.splice(from, 1);
+          if (from < to) to -= 1;
+          layout.splice(to, 0, seg);
+        }
+        render(); refresh();
+      });
+    }
+  }
+
+  render();
+  if (!editable) return;
+  DnD.draggables("#palette [data-drag]");
+  DnD.dropzones("#trash", ["seg"], function (p) { layout.splice(p.index, 1); render(); refresh(); });
+
+  document.getElementById("save").addEventListener("click", async function () {
+    const res = await DnD.post(base + "save/", {layout: layout});
+    if (res.ok) { DnD.flash(res.message); document.getElementById("state").textContent = "Saved."; }
+    else DnD.flash(res.errors, "error");
+  });
+  document.getElementById("save-template").addEventListener("click", async function () {
+    const res = await DnD.post(base + "template/", {layout: layout});
+    DnD.flash(res.ok ? res.message : res.errors, res.ok ? "success" : "error");
+  });
+  document.getElementById("load-template").addEventListener("click", async function () {
+    const res = await DnD.post(base + "load_template/", {});
+    if (res.ok) { layout = res.layout; render(); refresh(); }
+  });
+})();
+</script>
+{% endblock %}

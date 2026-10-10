@@ -29,7 +29,8 @@ class LockedExperimentForm(ExperimentForm):
 
 
 class UploadForm(forms.Form):
-    file = forms.FileField(help_text="CSV or Excel. Columns: sample_id (required), source_plate, source_well, condition; "
+    file = forms.FileField(help_text="CSV or Excel. Columns: sample_id (required), source_plate, source_well, "
+                                     "plate_format (6/12/24/48/96, default 24), condition; "
                                      "optional pool_id + barcode_id to import a ready-made plan.")
 
 

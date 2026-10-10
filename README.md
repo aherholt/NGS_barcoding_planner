@@ -76,6 +76,20 @@ Rules that enforce the order:
 Non-Tag&Pool experiments (bulk RNA-seq, snRNA-seq, CRISPR screens) follow the same path; step 3 is just
 the sample-list upload (each sample becomes one indexed library).
 
+### Visual planning (drag & drop)
+
+| Page | Where | What you see | Drag & drop |
+|---|---|---|---|
+| **Plates & well barcodes** | experiment → tab | culture plates in their format (6/12/24/48/96-well, column `plate_format` of the sample list), the 96-well PCR plate(s) filled exactly as the STAR protocol does, the barcode stock plate, all pools | barcode → sample (swap if used in that pool) · sample → sample (swap) · sample → pool header (takes a free barcode) · sample → “+ new pool” |
+| **Library structure** | experiment → tab | the product P5 → P7 as labelled blocks, the four reads as arrows, and which read bases cover which segment; checks that the well barcode sits where the barcode map expects it (R2 1–8) | blocks from the palette into the product, reorder with the ⠿ handle, bin to remove; edit label/length; save per experiment or as template per library type |
+| **Sample-index grid** | run → tab | 12 × 18 grid (i7 × i5) with every pool as a coloured tile (colour = experiment); shared rows/columns (index-hopping risk) in orange; live run checks | pool → cell (swap if occupied) · pool → tray (remove index) |
+
+Drag & drop follows the same rules as everything else: only while the plan is open (planning, run in
+planning, or amendment — in an approved run only the amended experiment's pools move). Every drop is
+validated on the server and recorded in the audit trail; a drop that breaks a rule is refused with a message.
+After manual edits the barcode layout is marked “edited by hand” (no longer reproducible from a seed).
+The library structure is part of the plan and is covered by the final 4-eyes approval.
+
 ### Run checks (shown live on the run page)
 
 * identical read structure for all experiments in the run (error)
@@ -114,7 +128,8 @@ python manage.py runserver
 
 Open <http://127.0.0.1:8000> and walk through one experiment:
 
-1. Log in as `tech`, open **TP26-001**, click **Accept experiment**.
+1. Log in as `tech`, open **TP26-001**, click **Accept experiment**. (Then look at the tabs
+   **Plates & well barcodes** and **Library structure**.)
 2. Upload `data\templates\sample_list_template.csv` (or your own list), click **Plan pools & barcodes**.
 3. Click **Create a new NGS run** (any run ID, choose a flow cell), go back to TP26-001 and **Add to run**.
 4. On the run page choose the index set → **Assign**, check the checks, **Submit final plan for approval**.

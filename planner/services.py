@@ -20,7 +20,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from . import checks
+from . import checks, library, plates
 from .models import (
     Deviation, Experiment, FlowcellType, IndexPrimer, IndexSet, Pool, RunPool, Sample,
     SequencingRun, SignOff, WellBarcode,
@@ -28,7 +28,6 @@ from .models import (
 
 log = logging.getLogger(__name__)
 
-WELLS_24 = [f"{r}{c}" for c in range(1, 7) for r in "ABCD"]  # same order as the STAR simulation
 MAX_POOLS_PER_STAR_RUN = 24  # one 24 deep-well pool plate on the deck
 MAX_SOURCE_PLATES = 10
 
@@ -57,7 +56,8 @@ def set_status(experiment: Experiment, status: str):
 # Sample list upload
 # --------------------------------------------------------------------------- #
 SAMPLE_COLUMNS_REQUIRED = ["sample_id"]
-SAMPLE_COLUMNS_OPTIONAL = ["source_plate", "source_well", "condition", "pool_id", "barcode_id"]
+SAMPLE_COLUMNS_OPTIONAL = ["source_plate", "source_well", "plate_format", "condition", "pool_id", "barcode_id"]
+PLATE_FORMAT_ALIASES = ("plate_format", "plate format", "format", "well_format", "plate_type")
 
 
 def read_csv_text(text: str) -> list[dict]:
@@ -96,6 +96,13 @@ def upload_samples(experiment: Experiment, rows: list[dict], user) -> int:
     dup = sorted({i for i in ids if ids.count(i) > 1})
     if dup:
         problems.append(f"sample_id used more than once: {dup}")
+    formats = []
+    for i, r in enumerate(rows, start=2):
+        raw = next((r[k] for k in PLATE_FORMAT_ALIASES if r.get(k)), "")
+        try:
+            formats.append(plates.parse_format(raw) or plates.DEFAULT_FORMAT)
+        except ValueError as e:
+            problems.append(f"row {i}: {e}")
     if problems:
         raise PlannerError(problems)
 
@@ -115,7 +122,7 @@ def upload_samples(experiment: Experiment, rows: list[dict], user) -> int:
     for i, r in enumerate(rows):
         s = Sample(experiment=experiment, sample_id=r["sample_id"], order=i,
                    source_plate=r.get("source_plate", ""), source_well=r.get("source_well", "").upper(),
-                   condition=r.get("condition", ""))
+                   plate_format=formats[i], condition=r.get("condition", ""))
         if has_plan:
             pid = r["pool_id"]
             if pid not in pools:
@@ -143,8 +150,7 @@ def even_pool_sizes(n_samples: int, max_pool_size: int) -> list[int]:
 
 def _sample_order_key(plate_order: dict):
     def key(s: Sample):
-        well_idx = WELLS_24.index(s.source_well) if s.source_well in WELLS_24 else 999
-        return plate_order.get(s.source_plate, 0), well_idx, s.order
+        return plate_order.get(s.source_plate, 0), plates.well_index(s.plate_format, s.source_well), s.order
     return key
 
 
@@ -230,9 +236,16 @@ def validate_plan(experiment: Experiment) -> list[str]:
         n_pools = experiment.pools.count()
         if n_pools > MAX_POOLS_PER_STAR_RUN:
             problems.append(f"{n_pools} pools, the STAR pool plate has {MAX_POOLS_PER_STAR_RUN} wells (split into several robot runs).")
-        bad_wells = sorted({s.source_well for s in samples if s.source_well and s.source_well not in WELLS_24})
+        bad_wells = sorted({f"{s.source_well} ({s.plate_format}-well)" for s in samples
+                            if s.source_well and s.source_well not in plates.wells(s.plate_format)})
         if bad_wells:
-            problems.append(f"source_well not in a 24-well plate: {bad_wells}")
+            problems.append(f"source_well does not exist in the plate format: {bad_wells}")
+        fmt_of: dict[str, set] = {}
+        for s in samples:
+            fmt_of.setdefault(s.source_plate, set()).add(s.plate_format)
+        mixed = sorted(p for p, f in fmt_of.items() if len(f) > 1)
+        if mixed:
+            problems.append(f"Culture plate(s) with more than one plate format in the sample list: {mixed}")
         missing_pos = [s.sample_id for s in samples if not s.source_plate or not s.source_well]
         if missing_pos:
             problems.append(f"{len(missing_pos)} samples without source_plate/source_well (needed by the robot).")
@@ -251,8 +264,31 @@ def validate_plan(experiment: Experiment) -> list[str]:
     return problems
 
 
+def plan_warnings(experiment: Experiment) -> list[str]:
+    """Things worth knowing that do not block the plan."""
+    warn = []
+    if experiment.is_tag_and_pool:
+        fmts = sorted(set(experiment.samples.values_list("plate_format", flat=True)) - plates.STAR_SUPPORTED_FORMATS)
+        if fmts:
+            warn.append(f"The STAR protocol currently loads 24-well culture plates only; this plan uses "
+                        f"{', '.join(f'{f}-well' for f in fmts)} plates (robot file must be adapted or prepared by hand).")
+    if experiment.library_layout:
+        an = library_analysis(experiment)
+        warn += [f"Library structure: {t}" for lvl, t in an.messages if lvl in ("error", "warning")]
+    return warn
+
+
+def library_analysis(experiment: Experiment, layout: list[dict] | None = None):
+    cfg = _cfg()
+    return library.analyse(
+        layout if layout is not None else experiment.library_layout,
+        experiment.r1_length, experiment.r2_length, experiment.i7_length, experiment.i5_length,
+        experiment.avg_insert_length,
+        (cfg["WELL_BARCODE_READ"], cfg["WELL_BARCODE_START"], cfg["WELL_BARCODE_LENGTH"]) if experiment.is_tag_and_pool else None)
+
+
 def plan_snapshot(experiment: Experiment) -> dict:
-    return {
+    snap = {
         "experiment": experiment.code,
         "barcode_set": str(experiment.well_barcode_set) if experiment.well_barcode_set else None,
         "seed": experiment.planning_seed,
@@ -264,6 +300,13 @@ def plan_snapshot(experiment: Experiment) -> dict:
             for s in experiment.samples.select_related("pool", "well_barcode")
         ],
     }
+    # added in v0.4 — only included when used, so older approvals keep their fingerprint
+    formats = dict(experiment.samples.values_list("sample_id", "plate_format"))
+    if any(f != plates.DEFAULT_FORMAT for f in formats.values()):
+        snap["plate_formats"] = formats
+    if experiment.library_layout:
+        snap["library_layout"] = experiment.library_layout
+    return snap
 
 
 def run_snapshot(run: SequencingRun) -> dict:
@@ -733,3 +776,180 @@ def decide_amendment(signoff: SignOff, user, approve: bool, comment: str = ""):
     else:
         RunPool.objects.filter(run=run, pool__experiment=exp).delete()
         set_status(exp, Experiment.Status.AMENDING)
+
+
+# --------------------------------------------------------------------------- #
+# Drag & drop editing (well barcodes, pools, sample indexes, library structure)
+#
+# Same rules as everywhere else: only while the plan is open (planning, run in planning,
+# or amendment). Every change is recorded by the audit trail (history tables).
+# --------------------------------------------------------------------------- #
+def _check_barcodes_editable(experiment: Experiment):
+    if not experiment.is_tag_and_pool:
+        raise PlannerError("Well barcodes are only used for Tag&Pool experiments.")
+    if experiment.plan_locked:
+        raise PlannerError("The plan is locked. To change it: remove the experiment from its run (run in planning) "
+                           "or reopen it as an amendment.")
+
+
+def _mark_manual(experiment: Experiment):
+    if experiment.planning_seed is not None:
+        experiment.planning_seed = None  # layout no longer reproducible from a seed
+        experiment.save()
+
+
+def _drop_empty_pool(pool: Pool | None):
+    if pool is not None and not pool.samples.exists() and not pool.run_links.exists():
+        pool.delete()
+
+
+def _next_pool_id(experiment: Experiment) -> str:
+    existing = set(experiment.pools.values_list("pool_id", flat=True))
+    n = 1
+    while f"{experiment.code}_P{n:02d}" in existing:
+        n += 1
+    return f"{experiment.code}_P{n:02d}"
+
+
+@transaction.atomic
+def assign_barcode(sample: Sample, barcode: WellBarcode) -> str:
+    """Give `sample` this barcode; if another sample in the same pool has it, the two swap."""
+    exp = sample.experiment
+    _check_barcodes_editable(exp)
+    if barcode.barcode_set_id != exp.well_barcode_set_id:
+        raise PlannerError(f"{barcode.barcode_id} is not in the barcode set of this experiment.")
+    if sample.pool is None:
+        raise PlannerError(f"{sample.sample_id} is not in a pool yet — drag it into a pool first.")
+    other = Sample.objects.filter(pool=sample.pool, well_barcode=barcode).exclude(pk=sample.pk).first()
+    msg = f"{sample.sample_id} → {barcode.barcode_id}"
+    if other:
+        other.well_barcode = sample.well_barcode
+        other.save()
+        msg += f" (swapped with {other.sample_id}, now {other.well_barcode.barcode_id if other.well_barcode else '–'})"
+    sample.well_barcode = barcode
+    sample.save()
+    _mark_manual(exp)
+    return msg
+
+
+@transaction.atomic
+def move_sample(sample: Sample, target_pool: Pool | None = None, target_sample: Sample | None = None,
+                new_pool: bool = False) -> str:
+    """Drop a sample onto another sample (swap) or onto a pool (take a free barcode there)."""
+    exp = sample.experiment
+    _check_barcodes_editable(exp)
+    if target_sample is not None:
+        if target_sample.experiment_id != exp.pk or target_sample.pk == sample.pk:
+            raise PlannerError("Drop onto another sample of the same experiment.")
+        a_pool, a_bc = sample.pool, sample.well_barcode
+        sample.pool, sample.well_barcode = target_sample.pool, target_sample.well_barcode
+        target_sample.pool, target_sample.well_barcode = a_pool, a_bc
+        sample.save()
+        target_sample.save()
+        _mark_manual(exp)
+        where = "barcodes swapped" if sample.pool_id == target_sample.pool_id else "pool and barcode swapped"
+        return f"{sample.sample_id} ⇄ {target_sample.sample_id}: {where}"
+
+    if new_pool:
+        target_pool = Pool.objects.create(experiment=exp, pool_id=_next_pool_id(exp))
+    if target_pool is None or target_pool.experiment_id != exp.pk:
+        raise PlannerError("Unknown target pool.")
+    if target_pool.pk == sample.pool_id:
+        return "No change."
+    used = set(target_pool.samples.values_list("well_barcode_id", flat=True))
+    if sample.well_barcode_id and sample.well_barcode_id not in used:
+        bc = sample.well_barcode  # keep its barcode if it is free in the target pool
+    else:
+        bc = exp.well_barcode_set.barcodes.exclude(pk__in=[u for u in used if u]).order_by("barcode_id").first()
+    if bc is None:
+        raise PlannerError(f"{target_pool.pool_id} is full (all {exp.well_barcode_set.size} barcodes used) — "
+                           "drop onto a sample in that pool to swap instead.")
+    old_pool = sample.pool
+    sample.pool, sample.well_barcode = target_pool, bc
+    sample.save()
+    _drop_empty_pool(old_pool)
+    _mark_manual(exp)
+    return f"{sample.sample_id} → {target_pool.pool_id} with {bc.barcode_id}"
+
+
+def index_scope(run: SequencingRun) -> list[Pool]:
+    """Pools shown in the run's index grid: pools in the run + pools of open amendments."""
+    ids = set(run.run_pools.values_list("pool_id", flat=True))
+    ids |= set(Pool.objects.filter(experiment__amendment_run=run,
+                                   experiment__status=Experiment.Status.AMENDING).values_list("pk", flat=True))
+    return list(Pool.objects.filter(pk__in=ids).select_related("experiment", "i7", "i5")
+                .order_by("experiment__code", "pool_id"))
+
+
+def index_editable(run: SequencingRun, pool: Pool) -> bool:
+    if run.status == SequencingRun.Status.PLANNING:
+        return pool.run_links.filter(run=run).exists()
+    return pool.experiment.amendment_run_id == run.pk and pool.experiment.status == Experiment.Status.AMENDING
+
+
+@transaction.atomic
+def set_pool_index(run: SequencingRun, pool: Pool, i7: IndexPrimer, i5: IndexPrimer | None) -> str:
+    """Assign an i7/i5 pair to a pool. If another pool of the run has this pair, the two swap."""
+    if not index_editable(run, pool):
+        raise PlannerError(f"{pool.pool_id} is locked (final plan in review/approved). Reopen the run or amend the experiment.")
+    if i7.kind != "i7" or (i5 is not None and i5.kind != "i5"):
+        raise PlannerError("Invalid primer kinds.")
+    if i5 is not None and i5.index_set_id != i7.index_set_id:
+        raise PlannerError("i7 and i5 must come from the same index set.")
+    other = next((p for p in index_scope(run) if p.pk != pool.pk and p.i7_id == i7.pk
+                  and (p.i5_id == (i5.pk if i5 else None))), None)
+    msg = f"{pool.pool_id} → {i7.primer_id} + {i5.primer_id if i5 else '–'}"
+    if other:
+        if not index_editable(run, other):
+            raise PlannerError(f"This pair is used by {other.pool_id}, which is locked.")
+        other.i7, other.i5 = pool.i7, pool.i5
+        other.save()
+        msg += f" (swapped with {other.pool_id})"
+    pool.i7, pool.i5 = i7, i5
+    pool.save()
+    return msg
+
+
+@transaction.atomic
+def clear_pool_index(run: SequencingRun, pool: Pool) -> str:
+    if not index_editable(run, pool):
+        raise PlannerError(f"{pool.pool_id} is locked.")
+    pool.i7 = pool.i5 = None
+    pool.save()
+    return f"{pool.pool_id}: index removed"
+
+
+def grid_index_set(run: SequencingRun, requested_pk: int | None = None) -> IndexSet | None:
+    if requested_pk:
+        return IndexSet.objects.filter(pk=requested_pk).first()
+    used = next((p.i7.index_set for p in index_scope(run) if p.i7_id), None)
+    return used or IndexSet.objects.order_by("name").first()
+
+
+@transaction.atomic
+def save_library_layout(experiment: Experiment, raw) -> list[dict]:
+    if experiment.plan_locked:
+        raise PlannerError("The plan is locked — the library structure can only be changed while the plan is open.")
+    try:
+        layout = library.clean_layout(raw)
+    except (ValueError, TypeError) as e:
+        raise PlannerError(str(e))
+    experiment.library_layout = layout
+    experiment.save()
+    return layout
+
+
+@transaction.atomic
+def save_library_template(library_type: str, raw) -> None:
+    from .models import LibraryTemplate
+    try:
+        layout = library.clean_layout(raw)
+    except (ValueError, TypeError) as e:
+        raise PlannerError(str(e))
+    LibraryTemplate.objects.update_or_create(library_type=library_type, defaults={"layout": layout})
+
+
+def library_template(library_type: str) -> list[dict]:
+    from .models import LibraryTemplate
+    t = LibraryTemplate.objects.filter(library_type=library_type).first()
+    return t.layout if t else library.default_layout(library_type)

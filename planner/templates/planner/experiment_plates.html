@@ -1,0 +1,118 @@
+{% extends "planner/base.html" %}
+{% block title %}{{ exp.code }} plates – NGS barcoding planner{% endblock %}
+{% block content %}
+{% include "planner/_exp_header.html" %}
+
+{% if editable %}
+  <div class="issue info">✋ <b>Drag &amp; drop is on.</b>
+    Drag a <b>barcode</b> from the stock plate onto a sample (if another sample in that pool has it, they swap) ·
+    drag a <b>sample</b> onto another sample (swap) or onto a pool's header (it takes a free barcode there) or onto “+ new pool”.
+    Every change is checked and recorded in the audit trail.</div>
+{% elif exp.is_tag_and_pool %}
+  <div class="issue info">🔒 View only — the plan is locked ({{ exp.get_status_display }}).</div>
+{% endif %}
+{% for p in problems %}<div class="issue error">{{ p }}</div>{% endfor %}
+{% for w in warnings %}<div class="issue warning">{{ w }}</div>{% endfor %}
+
+{% if exp.is_tag_and_pool %}
+<div class="two" style="margin-top:12px">
+<div>
+  <div class="card">
+    <h2>Pools <span class="muted" style="font-weight:400">· {{ pools|length }} pools{% if exp.planning_seed %} · seed {{ exp.planning_seed }}{% elif pools %} · edited by hand{% endif %}</span></h2>
+    {% for p in pools %}
+      <div class="pool">
+        <h3 class="pool-drop" data-pool="{{ p.pool.pk }}" style="background:{{ p.bg }};color:{{ p.fg }};padding:4px 8px;border-radius:4px">
+          {{ p.pool.pool_id }} <span class="badge">{{ p.samples|length }} samples · {{ p.free }} barcodes free</span>
+          {% if p.pool.i7 %}<span class="badge mono">{{ p.pool.i7.primer_id }} + {{ p.pool.i5.primer_id|default:"–" }}</span>{% endif %}</h3>
+        <div class="legend">
+          {% for s in p.samples %}
+            <span class="chip sample-tile" data-sample="{{ s.pk }}" {% if editable %}data-drag='{"kind":"sample","sample":{{ s.pk }}}'{% endif %}
+                  title="{{ s.sample_id }} · {{ s.source_plate }} {{ s.source_well }} · {{ s.condition }}">
+              {{ s.sample_id }} <span class="mono" style="background:{{ p.bg }};padding:0 4px;border-radius:4px">{{ s.well_barcode.barcode_id|default:"?" }}</span></span>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+    {% if unassigned %}
+      <div class="pool"><h3>Not in a pool <span class="badge warn">{{ unassigned|length }}</span></h3>
+        <div class="legend">{% for s in unassigned %}<span class="chip sample-tile" data-sample="{{ s.pk }}" {% if editable %}data-drag='{"kind":"sample","sample":{{ s.pk }}}'{% endif %}>{{ s.sample_id }}</span>{% endfor %}</div></div>
+    {% endif %}
+    {% if editable %}<div class="pool pool-drop" data-pool="new" style="text-align:center;color:var(--muted);border-style:dashed">+ new pool (drop a sample here)</div>{% endif %}
+    {% if not pools and not unassigned %}<p class="muted">No samples yet — upload a sample list on the Overview tab.</p>{% endif %}
+  </div>
+</div>
+<div>
+  <div class="card">
+    <h2>Barcode stock plate {% if exp.well_barcode_set %}<span class="muted" style="font-weight:400">· {{ exp.well_barcode_set }}</span>{% endif %}</h2>
+    {% if stock %}
+      <table class="plate f96">
+        <tr><th></th>{% for c in stock.cols %}<th>{{ c }}</th>{% endfor %}</tr>
+        {% for row in stock.rows %}<tr><th>{{ row.0.0|slice:":1" }}</th>
+          {% for well, b in row %}<td>{% if b %}<div class="well bc-tile" style="background:#fff4e0;border-color:#e0b46b"
+              {% if editable %}data-drag='{"kind":"barcode","barcode":{{ b.pk }}}'{% endif %} title="{{ b.barcode_id }} · {{ b.sequence }} · well {{ well }}">
+              <b>{{ b.barcode_id }}</b><span class="bc">{{ b.sequence|slice:":4" }}…</span></div>
+            {% else %}<div class="well" style="opacity:.35"></div>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+      </table>
+    {% else %}<p class="muted">No well-barcode set selected (Edit details).</p>{% endif %}
+  </div>
+</div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Culture plates <span class="muted" style="font-weight:400">· format from the sample list (column <code>plate_format</code>)</span></h2>
+  <div class="plates">
+  {% for pl in culture %}
+    <figure><figcaption>{{ pl.name }} <span class="muted" style="font-weight:400">· {{ pl.format }}-well</span></figcaption>
+      <table class="plate f{{ pl.format }}">
+        <tr><th></th>{% for c in pl.cols %}<th>{{ c }}</th>{% endfor %}</tr>
+        {% for row in pl.rows %}<tr><th>{{ row.0.0|slice:":1" }}</th>
+          {% for well, c in row %}<td>{% if c %}<div class="well {% if editable %}sample-tile{% endif %}" data-sample="{{ c.s.pk }}"
+              {% if editable %}data-drag='{"kind":"sample","sample":{{ c.s.pk }}}'{% endif %}
+              style="background:{{ c.bg }};color:{{ c.fg }}" title="{{ c.s.sample_id }} · {{ c.s.condition }} · {{ c.s.pool.pool_id|default:'no pool' }} · {{ c.s.well_barcode.barcode_id|default:'' }}">
+              <b>{{ c.s.sample_id|truncatechars:9 }}</b>{% if c.s.well_barcode %}<span class="bc">{{ c.s.well_barcode.barcode_id }}</span>{% endif %}</div>
+            {% else %}<div class="well" title="{{ well }} empty"></div>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+      </table></figure>
+  {% empty %}<p class="muted">No culture plate positions in the sample list.</p>{% endfor %}
+  </div>
+  {% if pools %}<div class="legend">{% for p in pools %}<span class="chip" style="background:{{ p.bg }};color:{{ p.fg }}">{{ p.pool.pool_id }}</span>{% endfor %}</div>{% endif %}
+</div>
+
+{% if exp.is_tag_and_pool %}
+<div class="card">
+  <h2>96-well PCR plate(s) <span class="muted" style="font-weight:400">· lysate transfer for barcode annealing, filled as the STAR protocol does (each pool starts a new column)</span></h2>
+  <div class="plates">
+  {% for pl in pcr %}
+    <figure><figcaption>{{ pl.name }}</figcaption>
+      <table class="plate f96">
+        <tr><th></th>{% for c in pl.cols %}<th>{{ c }}</th>{% endfor %}</tr>
+        {% for row in pl.rows %}<tr><th>{{ row.0.0|slice:":1" }}</th>
+          {% for well, c in row %}<td>{% if c %}<div class="well sq" style="background:{{ c.bg }};color:{{ c.fg }}"
+              title="{{ well }} · {{ c.s.sample_id }} · {{ c.s.source_plate }} {{ c.s.source_well }} · {{ c.s.pool.pool_id }} · {{ c.s.well_barcode.barcode_id }}">
+              <b>{{ c.s.sample_id|truncatechars:7 }}</b><span class="bc">{{ c.s.well_barcode.barcode_id }}</span></div>
+            {% else %}<div class="well sq"></div>{% endif %}</td>{% endfor %}</tr>{% endfor %}
+      </table></figure>
+  {% empty %}<p class="muted">Appears when samples are in pools.</p>{% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}{% if editable %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const url = "{% url 'experiment_dnd' exp.pk %}";
+  DnD.draggables("[data-drag]");
+  // barcode or sample dropped onto a sample (pool list or culture plate)
+  DnD.dropzones(".sample-tile", ["barcode", "sample"], function (p, zone) {
+    const target = zone.dataset.sample;
+    if (p.kind === "barcode") DnD.change(url, {op: "assign_barcode", sample: target, barcode: p.barcode});
+    else if (String(p.sample) !== target) DnD.change(url, {op: "move_sample", sample: p.sample, target_sample: target});
+  });
+  // sample dropped onto a pool header or "+ new pool"
+  DnD.dropzones(".pool-drop", ["sample"], function (p, zone) {
+    DnD.change(url, {op: "move_sample", sample: p.sample, pool: zone.dataset.pool});
+  });
+});
+</script>
+{% endif %}{% endblock %}

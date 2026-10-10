@@ -126,6 +126,18 @@ class FlowcellType(models.Model):
         return f"{self.name} ({self.output_m_read_pairs:,.0f} M)"
 
 
+class LibraryTemplate(models.Model):
+    """Default library structure per library type (used for new experiments)."""
+
+    library_type = models.CharField(max_length=20, unique=True)
+    layout = models.JSONField(default=list)
+    updated = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
+
+    def __str__(self):
+        return f"Template {self.library_type}"
+
+
 # --------------------------------------------------------------------------- #
 # Experiments
 # --------------------------------------------------------------------------- #
@@ -190,7 +202,10 @@ class Experiment(models.Model):
     amendment_run = models.ForeignKey(
         "SequencingRun", null=True, blank=True, on_delete=models.PROTECT, related_name="amendments",
         help_text="set while the plan of this experiment is reopened inside an approved run (amendment)")
-    planning_seed = models.IntegerField(null=True, blank=True, help_text="random seed of the last automatic barcode layout")
+    planning_seed = models.IntegerField(null=True, blank=True, help_text="random seed of the last automatic barcode layout "
+                                                                          "(empty after manual drag & drop changes)")
+    library_layout = models.JSONField(default=list, blank=True,
+                                      help_text="library structure P5 → P7: list of {type, label, length}")
 
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.SUBMITTED)
     sharepoint_push_pending = models.BooleanField(default=False)
@@ -245,7 +260,8 @@ class Sample(models.Model):
     experiment = models.ForeignKey(Experiment, on_delete=models.CASCADE, related_name="samples")
     sample_id = models.CharField(max_length=80)
     source_plate = models.CharField(max_length=40, blank=True, help_text="culture plate ID, e.g. CULT01")
-    source_well = models.CharField(max_length=4, blank=True, help_text="A1..D6 for 24-well plates")
+    source_well = models.CharField(max_length=4, blank=True, help_text="e.g. A1..D6 for 24-well plates")
+    plate_format = models.PositiveSmallIntegerField(default=24, help_text="culture plate format: 6, 12, 24, 48 or 96 wells")
     condition = models.CharField(max_length=200, blank=True)
     pool = models.ForeignKey(Pool, null=True, blank=True, on_delete=models.SET_NULL, related_name="samples")
     well_barcode = models.ForeignKey(WellBarcode, null=True, blank=True, on_delete=models.PROTECT)

@@ -15,3 +15,5 @@
 | 11 | More than 24 pools or 10 culture plates per experiment → several STAR runs; not yet split automatically | robot file | later |
 | 12 | Hostname / HTTPS certificate on the lab server | go-live | IT |
 | 13 | Backup job and a tested restore | audit trail | IT |
+| 14 | Real library construct entered in the structure builder and saved as template per library type | schematic, well-barcode check | to do |
+| 15 | STAR protocol for culture-plate formats other than 24-well (planner already supports 6–96-well) | robot | later |

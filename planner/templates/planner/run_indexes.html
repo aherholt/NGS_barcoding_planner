@@ -1,0 +1,86 @@
+{% extends "planner/base.html" %}
+{% block title %}{{ run.run_id }} indexes – NGS barcoding planner{% endblock %}
+{% block content %}
+<style>
+  .igrid { border-collapse:separate; border-spacing:2px; width:auto; }
+  .igrid th { font-size:10.5px; padding:2px; text-align:center; text-transform:none; letter-spacing:0; border:0; color:var(--muted); }
+  .igrid th.shared { color:var(--warn); background:var(--warnbg); border-radius:3px; }
+  .igrid th.used { color:var(--ink); }
+  .igrid td { border:0; padding:0; }
+  .icell { width:58px; height:40px; border:1px solid #e2e5ea; border-radius:4px; background:#fafbfc;
+           display:flex; flex-direction:column; gap:1px; align-items:stretch; justify-content:center; padding:1px; }
+  .icell.dup { border:2px solid var(--err); background:var(--errbg); }
+  .tile { font-size:10px; line-height:1.15; border-radius:3px; padding:2px 3px; text-align:center; overflow:hidden;
+          white-space:nowrap; text-overflow:ellipsis; border:1px solid rgba(0,0,0,.12); }
+  .tile.locked { opacity:.75; cursor:default; } .tile.amend { outline:2px dashed var(--warn); }
+  .tray { min-height:52px; display:flex; flex-wrap:wrap; gap:4px; padding:8px; border:1px dashed #c8cdd5; border-radius:6px; }
+  .tray .tile { width:auto; font-size:11px; padding:3px 6px; }
+</style>
+
+<div class="actions" style="justify-content:space-between;align-items:center">
+  <div><h1>Run {{ run.run_id }}</h1>
+    <div class="sub" style="margin-bottom:4px">{{ run.flowcell_type|default:"no flow cell" }} · <span class="mono">{{ run.read_structure }}</span> ·
+      {% include "planner/_status.html" with status=run.status label=run.get_status_display %}</div></div>
+</div>
+{% include "planner/_run_tabs.html" %}
+
+{% if any_editable %}
+  <div class="issue info">✋ <b>Drag &amp; drop is on.</b> Drag a pool onto a cell to give it that i7/i5 pair (onto an occupied cell: the two swap);
+    drag it back to the tray to remove its index. Row/column headers in orange are shared by several pools (index-hopping risk).
+    {% if run.status != "planning" %}Only pools of open amendments (dashed outline) can be moved.{% endif %}</div>
+{% else %}
+  <div class="issue info">🔒 View only — {% if run.status == "planning" %}add experiments to the run first{% else %}the final plan is {{ run.get_status_display|lower }}{% endif %}.</div>
+{% endif %}
+
+  <div class="card" style="position:sticky;top:0;z-index:5">
+    <h2>Pools without index <span class="muted" style="font-weight:400">· {{ unassigned|length }}</span></h2>
+    <div class="tray" id="tray">{% for t in unassigned %}{% include "planner/_index_tile.html" %}{% empty %}<span class="muted">All pools have an index pair.{% if any_editable %} Drop a pool here to remove its index.{% endif %}</span>{% endfor %}</div>
+  </div>
+
+<div class="card">
+  <div class="actions" style="justify-content:space-between;align-items:center">
+    <h2 style="margin:0">i7 × i5 {% if iset %}<span class="muted" style="font-weight:400">· {{ iset }}</span>{% endif %}</h2>
+    <form method="get" class="actions"><select name="set" onchange="this.form.submit()">
+      {% for s in index_sets %}<option value="{{ s.pk }}" {% if iset and s.pk == iset.pk %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></form>
+  </div>
+  <div class="legend">{% for e, c in experiments %}<span class="chip" style="background:{{ c.0 }};color:{{ c.1 }}">{{ e.code }}</span>{% endfor %}</div>
+  {% if iset %}
+  <div style="overflow-x:auto">
+  <table class="igrid">
+    <tr><th>i7 \ i5</th>{% for b in i5s %}<th class="{% for k, v in used5.items %}{% if k == b.pk and v > 1 %}shared{% elif k == b.pk and v == 1 %}used{% endif %}{% endfor %}"
+        title="{{ b.sequence }}">{{ b.primer_id }}</th>{% endfor %}</tr>
+    {% for row in rows %}
+      <tr><th class="{% if row.used > 1 %}shared{% elif row.used %}used{% endif %}" title="{{ row.i7.sequence }}">{{ row.i7.primer_id }}</th>
+        {% for c in row.cells %}<td><div class="icell {% if c.tiles|length > 1 %}dup{% endif %}" data-i7="{{ row.i7.pk }}" data-i5="{{ c.i5.pk }}"
+             title="{{ row.i7.primer_id }} {{ row.i7.sequence }} + {{ c.i5.primer_id }} {{ c.i5.sequence }}">
+          {% for t in c.tiles %}{% include "planner/_index_tile.html" %}{% endfor %}</div></td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}<p class="muted">No index set imported yet (see README: import_reference indexes).</p>{% endif %}
+  {% if foreign %}<div class="issue warning">Pools with indexes from another set (not shown in this grid):
+    {% for t in foreign %}{{ t.pool.pool_id }}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+</div>
+
+  <div class="card">
+    <h2>Run checks</h2>
+    {% for i in issues %}<div class="issue {{ i.level }}"><b>{{ i.level|upper }}</b> · {{ i.message }}</div>{% endfor %}
+    {% for e, pv in amend_previews %}
+      <p style="margin:10px 0 4px"><b>Amendment {{ e.code }}</b> (checked with its pools back in the run):</p>
+      {% for p in pv.problems %}<div class="issue error">{{ p }}</div>{% empty %}<div class="issue info">✓ All run checks pass with this amendment.</div>{% endfor %}
+    {% endfor %}
+  </div>
+{% endblock %}
+
+{% block scripts %}{% if any_editable %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const url = "{% url 'run_dnd' run.pk %}";
+  DnD.draggables(".tile[data-drag]");
+  DnD.dropzones(".icell", ["pool"], function (p, cell) {
+    DnD.change(url, {op: "set_index", pool: p.pool, i7: cell.dataset.i7, i5: cell.dataset.i5});
+  });
+  DnD.dropzones("#tray", ["pool"], function (p) { DnD.change(url, {op: "clear_index", pool: p.pool}); });
+});
+</script>
+{% endif %}{% endblock %}

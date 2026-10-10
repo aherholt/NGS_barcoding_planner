@@ -52,6 +52,35 @@
   ol.steps li.done { background:var(--okbg); color:var(--ok); } ol.steps li.done::before { content:"✓"; }
   ol.steps li.now { background:var(--accent); color:#fff; } ol.steps li.now::before { color:var(--accent); }
   .two { display:grid; grid-template-columns: 2fr 1fr; gap:16px; } @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  /* tabs */
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin:4px 0 16px; }
+  .tabs a { padding:8px 14px; text-decoration:none; color:var(--muted); border-bottom:2px solid transparent; }
+  .tabs a.on { color:var(--ink); border-bottom-color:var(--accent); font-weight:600; }
+  /* plates */
+  .plate { border-collapse:separate; border-spacing:3px; width:auto; }
+  .plate th { font-size:11px; color:var(--muted); text-align:center; padding:0; border:0; text-transform:none; }
+  .plate td { border:0; padding:0; }
+  .well { border:1px solid #c8cdd5; border-radius:50%; display:flex; flex-direction:column; align-items:center;
+          justify-content:center; text-align:center; background:#fafbfc; overflow:hidden; line-height:1.1; }
+  .f96 .well { width:44px; height:44px; font-size:9px; } .f48 .well { width:52px; height:52px; font-size:10px; }
+  .f24 .well { width:62px; height:62px; font-size:10.5px; } .f12 .well { width:78px; height:78px; font-size:11px; }
+  .f6 .well { width:96px; height:96px; font-size:12px; }
+  .well.sq { border-radius:6px; }
+  .well b { font-weight:650; } .well .bc { font-family:ui-monospace,Consolas,monospace; }
+  .plates { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start; }
+  .plates figure { margin:0; } .plates figcaption { font-weight:600; margin-bottom:4px; }
+  /* drag & drop */
+  [draggable="true"] { cursor:grab; } .dragging { opacity:.4; }
+  .over { outline:3px dashed var(--accent) !important; outline-offset:1px; }
+  body.busy { cursor:progress; }
+  .chip { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:10px; font-size:12px;
+          border:1px solid rgba(0,0,0,.15); background:#fff; white-space:nowrap; }
+  .chip.mono, .mono.chip { font-family:ui-monospace,Consolas,monospace; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+  .cov td, .cov th { font-size:13px; }
+  svg.libsvg { width:100%; height:auto; } svg.libsvg .seg { font-size:11px; font-weight:600; fill:#1d2430; }
+  svg.libsvg .len { font-size:10px; fill:#475467; } svg.libsvg .lbl { font-size:11px; fill:#667085; }
+  svg.libsvg .rd { font-size:12px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -70,5 +99,7 @@
   {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
   {% block content %}{% endblock %}
 </main>
+{% load static %}<script src="{% static 'planner/dnd.js' %}"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

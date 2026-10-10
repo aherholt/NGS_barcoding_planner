@@ -1,0 +1,3 @@
+<div class="tile {% if not t.editable %}locked{% endif %} {% if t.amending %}amend{% endif %}" style="background:{{ t.bg }};color:{{ t.fg }}"
+     {% if t.editable %}data-drag='{"kind":"pool","pool":{{ t.pool.pk }}}'{% endif %}
+     title="{{ t.pool.pool_id }} · {{ t.pool.experiment.code }} · {{ t.pool.samples.count }} samples{% if not t.editable %} · locked{% endif %}">{{ t.short }}</div>

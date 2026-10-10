@@ -1,0 +1,5 @@
+<nav class="tabs">
+  <a href="{% url 'experiment_detail' exp.pk %}" class="{% if not tab %}on{% endif %}">Overview</a>
+  <a href="{% url 'experiment_plates' exp.pk %}" class="{% if tab == 'plates' %}on{% endif %}">{% if exp.is_tag_and_pool %}Plates &amp; well barcodes{% else %}Plates{% endif %}</a>
+  <a href="{% url 'experiment_library' exp.pk %}" class="{% if tab == 'library' %}on{% endif %}">Library structure</a>
+</nav>
